@@ -12,6 +12,7 @@ import tkinter.ttk as ttk
 import subprocess
 import sys
 from camera_models_db import get_camera_models, add_camera_model
+from helper_tools.tk_tooltip import ToolTip
 
 # Supported file extensions
 # Tested with Sony a6700, GoPro Hero 8 Black, iPhone 14 Pro Max, Sony RX100 VII
@@ -241,6 +242,15 @@ def select_folder(by_camera_model_var=None):
         print("Organization complete.")
 
 
+def launch_folder_renamer_gui():
+    import os
+    import sys
+    import subprocess
+    script_path = os.path.join(os.path.dirname(
+        __file__), 'folder_renamer_gui.py')
+    subprocess.Popen([sys.executable, script_path])
+
+
 if __name__ == "__main__":
     import tkinter as tk
     import subprocess
@@ -255,17 +265,35 @@ if __name__ == "__main__":
         root = tk.Tk()
         root.eval('tk::PlaceWindow . center')
         root.title("Camera Organizer Launcher")
-        root.geometry("350x180")
+        root.geometry("350x450")
         # Center the window on the screen
         root.update_idletasks()
-        label = tk.Label(root, text="Choose a tool to launch:", pady=20)
+        label = tk.Label(root, text="Choose a tool to launch:", pady=10)
         label.pack()
-        org_btn = tk.Button(root, text="Open Organizer", width=20,
+        # Add a label with a description
+        desc_label = tk.Label(root, text="Organizer: Organize photos/videos by date and camera model.\nBatch Renamer: Rename files/folders with 'UnknownCamera'.",
+                              wraplength=320, justify="left", fg="gray")
+        desc_label.pack(pady=(0, 10))
+        
+        # Button - Open Organizer GUI
+        org_btn = tk.Button(root, text="Photo & Video Organizer", width=30,
                             command=lambda: launch_gui("organizer_gui.py"))
         org_btn.pack(pady=10)
-        ren_btn = tk.Button(root, text="Open Batch Renamer",
-                            width=20, command=lambda: launch_gui("renamer_gui.py"))
+        ToolTip(org_btn, "Organize photos and videos by date and camera model.")
+        
+        # Button - Open Batch Renamer GUI (renames UnknownCamera)
+        ren_btn = tk.Button(root, text="Batch Renamer for 'UnknownCamera'",
+                            width=30, command=lambda: launch_gui("renamer_gui.py"))
         ren_btn.pack(pady=10)
+        ToolTip(
+            ren_btn, "Batch rename files/folders with 'UnknownCamera' in their name.")
+        
+        # Button - Open Folder Renamer GUI
+        folder_renamer_btn = tk.Button(
+            root, text="Camera Folder Renamer", width=30, command= lambda: launch_gui("folder_renamer_gui.py"))
+        folder_renamer_btn.pack(pady=10)
+        ToolTip(folder_renamer_btn, "Rename camera folders (NNNYMMDD → YYYY-MM-DD[_CameraModel])")
+
         root.mainloop()
 
     main()

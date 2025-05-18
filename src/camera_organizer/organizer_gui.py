@@ -80,6 +80,7 @@ def main():
                              for ext in extensions))
             path_label.config(
                 text=f"Selected: {folder_path}\nTotal items: {count}")
+        print(f"Selected folder: {folder_path}")
 
     def start_organizing():
         folder_path = selected_folder['path']
