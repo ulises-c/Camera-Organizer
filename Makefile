@@ -24,6 +24,13 @@ check-tools:
 # Install the desired Python version using pyenv and set it as local
 install-python: check-tools
 	@echo "Installing Python $(PYTHON_VERSION) using pyenv..."
+	$(PYENV) install -s $(PYTHON_VERSION)
+	$(PYENV) local $(PYTHON_VERSION)
+
+# macOS-specific: Install Python with Homebrew tcl-tk support for working Tkinter
+# BUG: Doesn't seem to actually work. The Tkinter module is still not found.
+install-python-macos: check-tools
+	@echo "Installing Python $(PYTHON_VERSION) using pyenv with Homebrew tcl-tk support (macOS only)..."
 	env \
 	    LDFLAGS="-L$(brew --prefix tcl-tk)/lib" \
 	    CPPFLAGS="-I$(brew --prefix tcl-tk)/include" \

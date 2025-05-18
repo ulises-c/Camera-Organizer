@@ -2,24 +2,18 @@
 requires = ["poetry-core>=1.5.0"]
 build-backend = "poetry.core.masonry.api"
 
-[project]
+[tool.poetry]
 name = "Camera-Organizer"
 version = "0.1.0"
 description = "Camera Files Organizer is a Python script that organizes photos and videos from a camera into folders based on the date they were taken."
 readme = "README.md"
-authors = [{name = "Ulises Chavarria"}]
-requires-python = ">=3.11"
-dynamic = ["dependencies", "optional-dependencies"]
+authors = ["Ulises Chavarria"]
 license = "MIT"
-
-[tool.poetry]
 packages = [{ include = "camera_organizer", from = "src" }]
 
 [tool.poetry.dependencies]
 python = "^3.11"
 exifread = "^3.3.1"
-# tk = "^0.1.0"
 
-[project.scripts]
+[tool.poetry.scripts]
 start = "camera_organizer.main:main"
-
