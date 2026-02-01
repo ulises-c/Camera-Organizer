@@ -67,13 +67,14 @@ def get_legacy_txt_path() -> Path:
 def _migrate_from_txt_if_needed():
     """Migrate from legacy text/seed format to JSON if needed."""
     json_path = get_db_path()
-    
+
     if json_path.exists():
         return
 
     txt_path = get_legacy_txt_path()
     seed_dir = Path(__file__).parent.parent / "data"
     seed_json = seed_dir / "camera_models_seed.json"
+    # TODO: Remove txt seed support in future versions
     seed_txt = seed_dir / "camera_models_seed.txt"
 
     models = []
