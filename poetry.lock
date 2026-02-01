@@ -231,7 +231,22 @@ notebook = ["ipywidgets (>=6)"]
 slack = ["slack-sdk"]
 telegram = ["requests"]
 
+[[package]]
+name = "ttkbootstrap"
+version = "1.20.1"
+description = "A supercharged theme extension for tkinter that enables on-demand modern flat style themes inspired by Bootstrap."
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "ttkbootstrap-1.20.1-py3-none-any.whl", hash = "sha256:f7419801fa169108ed7dce52a6004e9f34a4b6706802c8e70c0d23f157ffb868"},
+    {file = "ttkbootstrap-1.20.1.tar.gz", hash = "sha256:78cde59bba669e6836d13e53ab22e80caaf0236316d47c22ff14f9ea2179c145"},
+]
+
+[package.dependencies]
+pillow = ">=10,<13"
+
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "c97c1c9a63d152c90a7a05d7bee337a2cf2fbd1bd018539172d35079e4fe4503"
+content-hash = "0ff2237dfdc051a455d14a4ffeacc9c7ead0ee86160549c56729a904d7d082ea"

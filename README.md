@@ -32,39 +32,84 @@ A comprehensive toolkit for organizing photos, videos, and scans. Includes multi
 - Lossless and lossy compression options
 - Parallel processing for large batches
 
-## Installation
+## System Requirements
 
-### Prerequisites
-
-- macOS (tested on macOS 12+)
-- Python 3.12+
-- pyenv and Poetry (for development)
-
-### Quick Setup
+### macOS
 
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd photo-organizer
+# Install Homebrew if needed
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-# Setup environment and install dependencies
+# Install required packages
+brew install tcl-tk pyenv poetry
+
+# Build Python with Tkinter support
+export LDFLAGS="-L$(brew --prefix tcl-tk)/lib"
+export CPPFLAGS="-I$(brew --prefix tcl-tk)/include"
+export PKG_CONFIG_PATH="$(brew --prefix tcl-tk)/lib/pkgconfig"
+pyenv install 3.12
+```
+
+### Linux (Debian/Ubuntu)
+
+```bash
+# Install build dependencies
+sudo apt-get update && sudo apt-get install -y \
+    build-essential libssl-dev zlib1g-dev libbz2-dev \
+    libreadline-dev libsqlite3-dev curl git \
+    libncursesw5-dev xz-utils tk-dev libxml2-dev \
+    libxmlsec1-dev libffi-dev liblzma-dev libheif-dev
+
+# Install pyenv
+curl https://pyenv.run | bash
+
+# Install Poetry
+curl -sSL https://install.python-poetry.org | python3 -
+```
+
+## Quick Start
+
+```bash
+# 1. Check your system
+make doctor
+
+# 2. Complete setup
 make setup
 
-# Run the launcher
+# 3. Run the application
 make run
 ```
 
-### Manual Installation
+## Development Commands
 
 ```bash
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate
+make help       # Show all commands
+make doctor     # Check system dependencies
+make setup      # Install everything
+make install    # Install Python packages only
+make run        # Launch the application
+make run-dev    # Run in development mode
+make clean      # Clean virtual environment
+```
 
-# Install dependencies
-pip install -r requirements.txt
-# Or with Poetry
-poetry install
+## Troubleshooting
+
+### "tkinter not available" error
+
+- **macOS**: Reinstall Python with tcl-tk support (see System Requirements)
+- **Linux**: Install `tk-dev` package before building Python
+
+### "Command not found: poetry"
+
+Install Poetry: https://python-poetry.org/docs/#installation
+
+### Old command still works
+
+You can also run:
+
+```bash
+poetry run photo-organizer
+poetry run python -m photo_organizer.launcher
 ```
 
 ## Usage
