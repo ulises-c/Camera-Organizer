@@ -162,10 +162,11 @@ def choose_best_variant(
     ssim_threshold: float = 0.98
 ) -> Tuple[Path, Dict]:
     """
-    Choose the best FRONT variant only.
+    Choose the best FRONT variant only (base vs _a).
     
-    NOTE: Backside (_b) files must be filtered out before calling this.
-    This function only compares base vs _a variants.
+    CRITICAL: This function MUST NOT receive backside (_b) files.
+    Backsides are filtered out by the caller (core.py) and converted
+    unconditionally without quality analysis.
     
     Args:
         variants: List of file paths (should NOT include _b files)
@@ -178,18 +179,20 @@ def choose_best_variant(
     if not variants:
         raise ValueError("No variants provided for selection")
     
-    # Safety check: filter out backsides (case-insensitive)
-    front_candidates = [p for p in variants if not p.stem.lower().endswith('_b')]
+    # Safety check: ensure no backsides slipped through
+    backside_files = [p for p in variants if p.stem.lower().endswith('_b')]
+    if backside_files:
+        raise ValueError(
+            f"Backside files should not be passed to choose_best_variant: {backside_files}"
+        )
     
-    if not front_candidates:
-        raise ValueError("No front-side candidates provided - only backsides found")
+    # Single candidate - no selection needed
+    if len(variants) == 1:
+        return variants[0], {'reason': 'single_candidate'}
     
-    if len(front_candidates) == 1:
-        return front_candidates[0], {'reason': 'single_candidate'}
-    
-    # Identify base and _a files (case-insensitive)
-    base_file = next((p for p in front_candidates if not p.stem.lower().endswith('_a')), None)
-    a_file = next((p for p in front_candidates if p.stem.lower().endswith('_a')), None)
+    # Identify base and _a files
+    base_file = next((p for p in variants if not p.stem.lower().endswith('_a')), None)
+    a_file = next((p for p in variants if p.stem.lower().endswith('_a')), None)
     
     # Policy-based selection
     if policy == 'prefer_base' and base_file:
@@ -199,7 +202,7 @@ def choose_best_variant(
     
     # Auto mode: quality metrics analysis
     results = []
-    for path in front_candidates:
+    for path in variants:
         metrics = compute_quality_metrics(path)
         score = compute_quality_score(metrics)
         results.append({'path': path, 'score': score, 'metrics': metrics})

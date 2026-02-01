@@ -99,25 +99,28 @@ class TIFFConverterGUI:
         self.root = ttk.Window(
             title="TIFF Converter",
             themename="darkly",
-            size=(900, 900)
+            size=(950, 950)
         )
         self.source_dir = None
         self.is_processing = False
         self._create_widgets()
+        
+        # Log initial dry-run state
+        self._log_dry_run_status()
 
     def _create_widgets(self):
+        # Main container (Frame supports padding, per GUI_CONSTRAINTS.md)
         container = ttk.Frame(self.root, padding=20)
         container.pack(fill=BOTH, expand=YES)
 
         # Header
-        header = ttk.Label(
+        ttk.Label(
             container,
             text="🖼️ TIFF to HEIC/LZW Converter",
             font=("Helvetica", 20, "bold")
-        )
-        header.pack(pady=(0, 20))
+        ).pack(pady=(0, 20))
 
-        # Directory Selection
+        # === Directory Selection ===
         dir_frame = ttk.LabelFrame(container, text="Source Directory")
         dir_frame.pack(fill=X, pady=10)
         
@@ -137,29 +140,28 @@ class TIFFConverterGUI:
             command=self.browse_directory
         ).pack(side=RIGHT)
 
-        # Workflow Mode
-        workflow_frame = ttk.LabelFrame(container, text="Workflow Mode")
-        workflow_frame.pack(fill=X, pady=10)
+        # === Workflow Configuration ===
+        work_frame = ttk.LabelFrame(container, text="Epson FastFoto Workflow")
+        work_frame.pack(fill=X, pady=10)
         
-        work_inner = ttk.Frame(workflow_frame, padding=10)
+        work_inner = ttk.Frame(work_frame, padding=10)
         work_inner.pack(fill=X)
         
         self.epson_mode = ttk.BooleanVar(value=True)
         ttk.Checkbutton(
             work_inner,
-            text="Epson FastFoto Workflow",
+            text="Enable Epson FastFoto Mode",
             variable=self.epson_mode,
             bootstyle="info-toolbutton"
         ).pack(anchor=W)
         
-        ttk.Label(
+        # Convert All option
+        self.convert_all_var = ttk.BooleanVar(value=False)
+        ttk.Checkbutton(
             work_inner,
-            text="• Groups _a/_b variants\n"
-                 "• Selects best quality front image\n"
-                 "• Creates LZW_compressed/ and HEIC/ folders\n"
-                 "• Archives all originals to uncompressed/",
-            font=("Helvetica", 9),
-            foreground="gray"
+            text="Convert ALL variants (skip selection, process base, _a, and _b)",
+            variable=self.convert_all_var,
+            bootstyle="warning-round-toggle"
         ).pack(anchor=W, padx=20, pady=5)
         
         # Variant selection policy
@@ -181,40 +183,45 @@ class TIFFConverterGUI:
             variable=self.variant_policy, value="prefer_a"
         ).pack(side=LEFT, padx=5)
         
-        # Convert all variants option
-        self.convert_all_var = ttk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            work_inner,
-            text="Convert ALL variants (skip selection - process base, _a, and _b)",
-            variable=self.convert_all_var,
-            bootstyle="warning-round-toggle"
-        ).pack(anchor=W, padx=20, pady=5)
-        
-        # Informational label about backside handling
+        # Informational note
         ttk.Label(
             work_inner,
-            text="ℹ️ Backside (_b) files are always converted regardless of selection mode",
+            text="ℹ️ Backside (_b) files are ALWAYS converted automatically\n"
+                 "   Selection only applies to base vs _a variants",
             font=("Helvetica", 9, "italic"),
             bootstyle="info"
-        ).pack(anchor=W, padx=20, pady=2)
+        ).pack(anchor=W, padx=20, pady=(2, 5))
 
-        # Execution Safety Section
-        safety_frame = ttk.LabelFrame(container, text="Execution Safety")
-        safety_frame.pack(fill=X, pady=10)
+        # === EXECUTION SAFETY (Prominent Section) ===
+        safety_frame = ttk.LabelFrame(container, text="⚠️ Execution Safety")
+        safety_frame.pack(fill=X, pady=15)
         
         safety_inner = ttk.Frame(safety_frame, padding=10)
         safety_inner.pack(fill=X)
         
         self.dry_run_var = ttk.BooleanVar(value=True)
-        dry_run_chk = ttk.Checkbutton(
+        self.dry_run_chk = ttk.Checkbutton(
             safety_inner,
-            text="🔒 Dry Run Mode (Preview only - no files written or moved)",
+            text="🔒 DRY RUN MODE (Preview only, no files written or moved)",
             variable=self.dry_run_var,
-            bootstyle="danger-round-toggle"
+            bootstyle="danger-round-toggle",
+            command=self._on_dry_run_toggle
         )
-        dry_run_chk.pack(fill=X, pady=5)
+        self.dry_run_chk.pack(fill=X)
+        
+        # Status badge
+        badge_frame = ttk.Frame(safety_inner)
+        badge_frame.pack(fill=X, pady=(8, 0))
+        
+        self.dry_status_label = ttk.Label(
+            badge_frame,
+            text="DRY RUN: ENABLED",
+            font=("Helvetica", 11, "bold"),
+            bootstyle="warning"
+        )
+        self.dry_status_label.pack(side=LEFT)
 
-        # Options
+        # === Conversion Options ===
         opt_frame = ttk.LabelFrame(container, text="Conversion Options")
         opt_frame.pack(fill=X, pady=10)
         
@@ -224,25 +231,25 @@ class TIFFConverterGUI:
         self.create_lzw = ttk.BooleanVar(value=True)
         ttk.Checkbutton(
             opt_inner,
-            text="Create Lossless Compressed TIFF",
+            text="Create LZW Compressed TIFF",
             variable=self.create_lzw,
             bootstyle="round-toggle"
-        ).pack(anchor=W, pady=5)
+        ).pack(anchor=W, pady=2)
 
-        # Compression type (LZW vs DEFLATE)
+        # Compression type
         comp_frame = ttk.Frame(opt_inner)
-        comp_frame.pack(fill=X, pady=5, padx=20)
+        comp_frame.pack(fill=X, padx=20, pady=2)
         
         ttk.Label(comp_frame, text="Compression:").pack(side=LEFT)
         self.compression_type = ttk.StringVar(value="lzw")
         ttk.Radiobutton(
-            comp_frame, text="LZW", 
+            comp_frame, text="LZW",
             variable=self.compression_type, value="lzw"
         ).pack(side=LEFT, padx=5)
         ttk.Radiobutton(
-            comp_frame, text="DEFLATE (10-20% smaller)", 
+            comp_frame, text="DEFLATE (smaller)",
             variable=self.compression_type, value="deflate"
-        ).pack(side=LEFT, padx=5)
+        ).pack(side=LEFT)
 
         self.create_heic = ttk.BooleanVar(value=True)
         ttk.Checkbutton(
@@ -250,81 +257,137 @@ class TIFFConverterGUI:
             text="Create HEIC (High Efficiency)",
             variable=self.create_heic,
             bootstyle="round-toggle"
-        ).pack(anchor=W, pady=5)
+        ).pack(anchor=W, pady=2)
 
-        # HEIC Quality slider
+        # HEIC quality
         quality_frame = ttk.Frame(opt_inner)
-        quality_frame.pack(fill=X, pady=5, padx=20)
+        quality_frame.pack(fill=X, padx=20, pady=5)
         
         ttk.Label(quality_frame, text="HEIC Quality:").pack(side=LEFT, padx=(0, 10))
         self.quality_var = ttk.IntVar(value=90)
         ttk.Scale(
             quality_frame,
-            from_=1,
-            to=100,
+            from_=1, to=100,
             variable=self.quality_var,
             bootstyle="info"
         ).pack(side=LEFT, fill=X, expand=YES, padx=(0, 10))
         
         self.quality_label = ttk.Label(quality_frame, text="90")
         self.quality_label.pack(side=LEFT)
-        
-        self.quality_var.trace_add("write", lambda *args: self.quality_label.config(
+        self.quality_var.trace_add("write", lambda *a: self.quality_label.config(
             text=str(self.quality_var.get())
         ))
 
-        # Progress
-        prog_frame = ttk.Frame(container)
-        prog_frame.pack(fill=X, pady=20)
-        
+        # === Progress ===
         self.progress_var = ttk.DoubleVar(value=0)
         self.progress_bar = ttk.Progressbar(
-            prog_frame,
+            container,
             variable=self.progress_var,
             bootstyle="success-striped",
             maximum=100
         )
-        self.progress_bar.pack(fill=X)
+        self.progress_bar.pack(fill=X, pady=(15, 5))
         
         self.status_var = ttk.StringVar(value="Ready")
-        ttk.Label(prog_frame, textvariable=self.status_var).pack(pady=(5, 0))
+        ttk.Label(container, textvariable=self.status_var).pack()
 
-        # Log area
-        log_label = ttk.Label(container, text="Processing Log:")
-        log_label.pack(anchor=W, pady=(10, 5))
-        
+        # === Log Area ===
+        ttk.Label(container, text="Processing Log:").pack(anchor=W, pady=(10, 5))
         self.log_area = ScrolledText(container, height=12, autohide=True)
         self.log_area.pack(fill=BOTH, expand=YES)
 
-        # Action buttons
+        # === Action Button ===
         btn_frame = ttk.Frame(container)
-        btn_frame.pack(fill=X, pady=(10, 0))
+        btn_frame.pack(fill=X, pady=(15, 0))
         
         self.start_btn = ttk.Button(
             btn_frame,
-            text="Start Conversion",
-            bootstyle=SUCCESS,
-            command=self.start_conversion
+            text="🚀 START CONVERSION (DRY RUN)",
+            bootstyle="warning",
+            command=self.start_conversion,
+            state=DISABLED
         )
         self.start_btn.pack(side=RIGHT)
 
+    def _on_dry_run_toggle(self):
+        """Handle dry-run toggle with confirmation and UI updates."""
+        enabled = bool(self.dry_run_var.get())
+        
+        # Confirmation when disabling dry-run
+        if not enabled:
+            confirm = messagebox.askyesno(
+                "Disable Dry Run",
+                "⚠️ You are about to DISABLE Dry Run.\n\n"
+                "This will allow the tool to:\n"
+                "• Write new LZW and HEIC files\n"
+                "• Move original files to uncompressed/\n\n"
+                "Are you sure you want to proceed?"
+            )
+            if not confirm:
+                self.dry_run_var.set(True)
+                return
+        
+        # Update UI
+        self._update_dry_run_ui()
+        self._log_dry_run_status()
+
+    def _update_dry_run_ui(self):
+        """Update all dry-run visual indicators."""
+        enabled = bool(self.dry_run_var.get())
+        
+        if enabled:
+            self.dry_status_label.config(
+                text="DRY RUN: ENABLED",
+                bootstyle="warning"
+            )
+            self.start_btn.config(
+                text="🚀 START CONVERSION (DRY RUN)",
+                bootstyle="warning"
+            )
+        else:
+            self.dry_status_label.config(
+                text="DRY RUN: DISABLED ⚠️",
+                bootstyle="danger"
+            )
+            self.start_btn.config(
+                text="🚀 START CONVERSION (APPLY CHANGES)",
+                bootstyle="success"
+            )
+
+    def _log_dry_run_status(self):
+        """Log current dry-run status to console."""
+        enabled = bool(self.dry_run_var.get())
+        if enabled:
+            self.log("=" * 60)
+            self.log("🔒 DRY RUN MODE: ENABLED")
+            self.log("   • No files will be written")
+            self.log("   • No files will be moved")
+            self.log("   • All operations are simulated")
+            self.log("=" * 60 + "\n")
+        else:
+            self.log("=" * 60)
+            self.log("⚠️  DRY RUN MODE: DISABLED")
+            self.log("   • Files WILL be written to LZW_compressed/ and HEIC/")
+            self.log("   • Originals WILL be moved to uncompressed/")
+            self.log("   • Changes are PERMANENT")
+            self.log("=" * 60 + "\n")
+
     def browse_directory(self):
+        """Browse for source directory."""
         path = filedialog.askdirectory(title="Select Folder with TIFF Files")
         if path:
             self.source_dir = Path(path)
             self.path_var.set(path)
-            self.log(f"✓ Selected directory: {path}")
+            self.log(f"✓ Selected directory: {path}\n")
+            self.start_btn.config(state=NORMAL)
 
     def log(self, message):
-        self.log_area.insert("end", f"{message}\n")
-        self.log_area.see("end")
-
-    def update_progress(self, current, total):
-        percentage = (current / total) * 100 if total > 0 else 0
-        self.root.after(0, lambda: self.progress_var.set(percentage))
-        self.root.after(0, lambda: self.status_var.set(f"Processing: {current}/{total} images"))
+        """Append message to log area."""
+        self.log_area.insert(END, f"{message}\n")
+        self.log_area.see(END)
 
     def start_conversion(self):
+        """Start the conversion process."""
         if not self.source_dir:
             messagebox.showerror("Error", "Please select a directory first")
             return
@@ -335,12 +398,16 @@ class TIFFConverterGUI:
 
         self.is_processing = True
         self.start_btn.config(state=DISABLED)
-        self.log_area.delete("1.0", "end")
-        self.log("🚀 Starting conversion process...\n")
+        self.log_area.delete("1.0", END)
+        
+        # Log execution mode
+        self._log_dry_run_status()
+        self.log(f"🚀 Starting conversion...\n")
         
         threading.Thread(target=self._run_conversion, daemon=True).start()
 
     def _run_conversion(self):
+        """Execute conversion in background thread."""
         try:
             options = {
                 'create_lzw': self.create_lzw.get(),
@@ -354,7 +421,7 @@ class TIFFConverterGUI:
             }
             
             if self.epson_mode.get():
-                self.root.after(0, lambda: self.log("📸 Using Epson FastFoto Workflow\n"))
+                self.root.after(0, lambda: self.log("📸 Epson FastFoto Workflow\n"))
                 results = process_epson_folder(
                     self.source_dir,
                     options,
@@ -362,7 +429,7 @@ class TIFFConverterGUI:
                 )
                 report_name = "epson_conversion_report.json"
             else:
-                # Standard batch mode
+                # Standard batch processing
                 tiff_files = []
                 for ext in ["*.tif", "*.tiff", "*.TIF", "*.TIFF"]:
                     tiff_files.extend(list(self.source_dir.glob(ext)))
@@ -387,17 +454,20 @@ class TIFFConverterGUI:
             success_count = sum(1 for r in results if r.success)
             total_count = len(results)
             
-            dry_run_msg = "\n** DRY RUN MODE - No changes made **" if options['dry_run'] else ""
+            dry_msg = " (DRY RUN - no changes made)" if options['dry_run'] else ""
             
             self.root.after(0, lambda: self.log(
-                f"\n✅ Conversion complete!{dry_run_msg}\n"
-                f"   Successfully processed: {success_count}/{total_count}\n"
-                f"   Report saved: {report_name}"
+                f"\n{'=' * 60}\n"
+                f"✅ Conversion complete{dry_msg}\n"
+                f"   Processed: {success_count}/{total_count}\n"
+                f"   Report: {report_name}\n"
+                f"{'=' * 60}"
             ))
+            
             self.root.after(0, lambda: messagebox.showinfo(
-                "Complete", 
+                "Complete",
                 f"Processed {success_count}/{total_count} files successfully.\n\n"
-                f"Report: {report_name}"
+                f"Report saved: {report_name}"
             ))
             
         except Exception as e:
@@ -407,9 +477,16 @@ class TIFFConverterGUI:
             self.root.after(0, self._finish_conversion)
 
     def _finish_conversion(self):
+        """Cleanup after conversion."""
         self.is_processing = False
         self.start_btn.config(state=NORMAL)
         self.status_var.set("Ready")
+
+    def update_progress(self, current, total):
+        """Update progress bar."""
+        percentage = (current / total) * 100 if total > 0 else 0
+        self.root.after(0, lambda: self.progress_var.set(percentage))
+        self.root.after(0, lambda: self.status_var.set(f"Processing: {current}/{total}"))
 
 
 def main():
