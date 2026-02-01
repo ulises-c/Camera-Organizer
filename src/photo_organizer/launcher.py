@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """Main launcher for Photo Organizer Suite."""
+import os
 import sys
 import subprocess
+import logging
 from pathlib import Path
 
 try:
     import tkinter as tk
-    from tkinter import ttk
+    from tkinter import ttk, messagebox
 except ImportError:
     print("Error: tkinter is required but not installed.")
     print("On macOS with pyenv, run: make install-python-macos")
     sys.exit(1)
+
+logger = logging.getLogger(__name__)
 
 TOOLS = [
     {
@@ -125,13 +129,37 @@ class LauncherApp:
         btn.pack(side=tk.RIGHT)
 
     def launch_tool(self, module_name: str):
-        """Launch tool as separate process using module path."""
+        """Launch tool as separate process with explicit environment preservation."""
         try:
-            subprocess.Popen([sys.executable, "-m", module_name])
+            # 1. Copy current environment to preserve virtualenv context
+            env = os.environ.copy()
+            
+            # 2. Add project src directory to PYTHONPATH for -m execution
+            project_root = str(Path(__file__).parent.parent)
+            existing_pythonpath = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = (
+                f"{project_root}{os.pathsep}{existing_pythonpath}" 
+                if existing_pythonpath 
+                else project_root
+            )
+            
+            # 3. Launch subprocess with explicit environment
+            process = subprocess.Popen(
+                [sys.executable, "-m", module_name],
+                env=env,
+                cwd=os.getcwd(),
+                start_new_session=True
+            )
+            
             tool_name = module_name.split('.')[-1]
-            self.status_var.set(f"Launched: {tool_name}")
+            self.status_var.set(f"✅ Launched: {tool_name}")
+            logger.info(f"Launched {module_name} (PID: {process.pid})")
+            
         except Exception as e:
-            self.status_var.set(f"Error launching {module_name}: {e}")
+            error_msg = f"Error launching {module_name}: {e}"
+            self.status_var.set(f"❌ {error_msg}")
+            logger.error(error_msg, exc_info=True)
+            messagebox.showerror("Launch Failed", error_msg)
 
     def run(self):
         self.root.mainloop()

@@ -5,23 +5,97 @@ Modern implementation using ttkbootstrap
 """
 import os
 import sys
+import logging
 import threading
+import importlib
 from pathlib import Path
 from tkinter import filedialog, messagebox
+
+logger = logging.getLogger(__name__)
+
+_TTKBOOTSTRAP_AVAILABLE = False
+_IMPORT_ERROR = None
 
 try:
     import ttkbootstrap as ttk
     from ttkbootstrap.constants import *
-    from ttkbootstrap.widgets import ScrolledText
-except ImportError:
-    sys.exit("ttkbootstrap required. Run: poetry add ttkbootstrap")
+
+    ScrolledText = None
+    candidates = [
+        "ttkbootstrap.widgets.scrolled",
+        "ttkbootstrap.scrolled",
+        "tkinter.scrolledtext",
+    ]
+
+    for module_path in candidates:
+        try:
+            mod = importlib.import_module(module_path)
+            ScrolledText = getattr(mod, "ScrolledText", None)
+            if ScrolledText:
+                break
+        except Exception:
+            continue
+
+    if not ScrolledText:
+        raise ImportError("Could not locate ScrolledText in ttkbootstrap or tkinter")
+
+    _TTKBOOTSTRAP_AVAILABLE = True
+
+except Exception as e:
+    _IMPORT_ERROR = e
+    logger.error(f"Failed to import ttkbootstrap: {e}", exc_info=True)
 
 from photo_organizer.converter.core import batch_process, save_report, process_epson_folder
 from photo_organizer.shared.file_utils import format_size
 
 
+def _check_dependencies():
+    """Check required dependencies and show helpful error if missing."""
+    if not _TTKBOOTSTRAP_AVAILABLE:
+        import tkinter as tk
+        root = tk.Tk()
+        root.withdraw()
+
+        error_details = str(_IMPORT_ERROR).lower()
+
+        if "ttkbootstrap" in error_details or "scrolledtext" in error_details:
+            message = (
+                "❌ Missing Dependency: ttkbootstrap\n\n"
+                "Install/upgrade with:\n"
+                "  poetry add ttkbootstrap@latest\n"
+                "  poetry install\n\n"
+                f"Error: {_IMPORT_ERROR}"
+            )
+        elif "_tkinter" in error_details:
+            message = (
+                "❌ Tkinter/Tcl-Tk Error\n\n"
+                "The GUI framework cannot load. On macOS, this usually means:\n\n"
+                "1. Python wasn't built with tcl-tk support\n"
+                "2. Homebrew's tcl-tk isn't linked properly\n\n"
+                "Fix:\n"
+                "  brew install tcl-tk\n"
+                "  export LDFLAGS=\"-L$(brew --prefix tcl-tk)/lib\"\n"
+                "  export CPPFLAGS=\"-I$(brew --prefix tcl-tk)/include\"\n"
+                "  pyenv install 3.12 --force\n"
+                "  cd <project> && poetry install\n\n"
+                f"Technical details: {_IMPORT_ERROR}"
+            )
+        else:
+            message = (
+                f"❌ Dependency Error\n\n"
+                f"Failed to load GUI dependencies.\n\n"
+                f"Error: {_IMPORT_ERROR}"
+            )
+
+        messagebox.showerror("Dependency Error", message)
+        root.destroy()
+        raise ImportError(message) from _IMPORT_ERROR
+
+
 class TIFFConverterGUI:
     def __init__(self):
+        _check_dependencies()
+        
         self.root = ttk.Window(
             title="TIFF Converter",
             themename="darkly",
