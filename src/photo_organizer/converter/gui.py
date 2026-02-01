@@ -1,32 +1,36 @@
 #!/usr/bin/env python3
 """
-TIFF Converter GUI - Migrated from tiff-to-heic project
-Modern implementation using ttkbootstrap
+TIFF Converter GUI - macOS/Linux Compatible Implementation
+Strict adherence to geometry constraints for Tcl/Tk 9.0+ compatibility.
 """
 import os
 import sys
 import logging
 import threading
 import importlib
-from pathlib import Path
+import tkinter as tk
 from tkinter import filedialog, messagebox
+from pathlib import Path
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+# Fallback flags
 _TTKBOOTSTRAP_AVAILABLE = False
 _IMPORT_ERROR = None
 
 try:
     import ttkbootstrap as ttk
-    from ttkbootstrap.constants import *
-
+    # CRITICAL: Do NOT use wildcard imports to avoid namespace collisions
+    # from ttkbootstrap.constants import *  # NEVER DO THIS
+    
+    # Locate ScrolledText widget
     ScrolledText = None
     candidates = [
-        "ttkbootstrap.widgets.scrolled",
         "ttkbootstrap.scrolled",
+        "ttkbootstrap.widgets",
         "tkinter.scrolledtext",
     ]
-
     for module_path in candidates:
         try:
             mod = importlib.import_module(module_path)
@@ -35,61 +39,63 @@ try:
                 break
         except Exception:
             continue
-
+    
     if not ScrolledText:
-        raise ImportError("Could not locate ScrolledText in ttkbootstrap or tkinter")
-
+        from tkinter import scrolledtext
+        ScrolledText = scrolledtext.ScrolledText
+    
     _TTKBOOTSTRAP_AVAILABLE = True
-
 except Exception as e:
     _IMPORT_ERROR = e
-    logger.error(f"Failed to import ttkbootstrap: {e}", exc_info=True)
+    logger.error(f"Failed to load GUI framework: {e}")
 
-from photo_organizer.converter.core import batch_process, save_report, process_epson_folder
+from photo_organizer.converter.core import batch_process, process_epson_folder
 from photo_organizer.shared.file_utils import format_size
 
 
 def _check_dependencies():
-    """Check required dependencies and show helpful error if missing."""
+    """Verify GUI environment before launching."""
     if not _TTKBOOTSTRAP_AVAILABLE:
-        import tkinter as tk
         root = tk.Tk()
         root.withdraw()
-
-        error_details = str(_IMPORT_ERROR).lower()
-
-        if "ttkbootstrap" in error_details or "scrolledtext" in error_details:
+        
+        error_details = str(_IMPORT_ERROR).lower() if _IMPORT_ERROR else ""
+        if "ttkbootstrap" in error_details:
             message = (
                 "❌ Missing Dependency: ttkbootstrap\n\n"
-                "Install/upgrade with:\n"
+                "Install with:\n"
                 "  poetry add ttkbootstrap@latest\n"
-                "  poetry install\n\n"
-                f"Error: {_IMPORT_ERROR}"
+                "  poetry install"
             )
         elif "_tkinter" in error_details:
             message = (
                 "❌ Tkinter/Tcl-Tk Error\n\n"
-                "The GUI framework cannot load. On macOS, this usually means:\n\n"
-                "1. Python wasn't built with tcl-tk support\n"
-                "2. Homebrew's tcl-tk isn't linked properly\n\n"
-                "Fix:\n"
-                "  brew install tcl-tk\n"
-                "  export LDFLAGS=\"-L$(brew --prefix tcl-tk)/lib\"\n"
-                "  export CPPFLAGS=\"-I$(brew --prefix tcl-tk)/include\"\n"
-                "  pyenv install 3.12 --force\n"
-                "  cd <project> && poetry install\n\n"
-                f"Technical details: {_IMPORT_ERROR}"
+                "Python wasn't built with tcl-tk support.\n"
+                "On macOS: brew install tcl-tk and rebuild Python."
             )
         else:
-            message = (
-                f"❌ Dependency Error\n\n"
-                f"Failed to load GUI dependencies.\n\n"
-                f"Error: {_IMPORT_ERROR}"
-            )
-
+            message = f"❌ Dependency Error\n\n{_IMPORT_ERROR}"
+        
         messagebox.showerror("Dependency Error", message)
         root.destroy()
-        raise ImportError(message) from _IMPORT_ERROR
+        sys.exit(1)
+
+
+def safe_widget_create(widget_cls, *args, bootstyle=None, **kwargs):
+    """
+    Safely create a ttkbootstrap widget with bootstyle support.
+    
+    Falls back to creation without bootstyle if the widget or underlying
+    Tcl/Tk doesn't support it. This prevents TclError on some platforms.
+    """
+    if bootstyle:
+        try:
+            return widget_cls(*args, bootstyle=bootstyle, **kwargs)
+        except (TypeError, tk.TclError):
+            # Widget doesn't support bootstyle - retry without it
+            return widget_cls(*args, **kwargs)
+    else:
+        return widget_cls(*args, **kwargs)
 
 
 class TIFFConverterGUI:
@@ -97,312 +103,335 @@ class TIFFConverterGUI:
         _check_dependencies()
         
         self.root = ttk.Window(
-            title="TIFF Converter",
+            title="TIFF Converter Pro",
             themename="darkly",
-            size=(950, 950)
+            size=(950, 850)
         )
         self.source_dir = None
         self.is_processing = False
         self._create_widgets()
-        
-        # Log initial dry-run state
+        self._update_dry_run_ui()
         self._log_dry_run_status()
 
     def _create_widgets(self):
-        # Main container (Frame supports padding, per GUI_CONSTRAINTS.md)
-        container = ttk.Frame(self.root, padding=20)
-        container.pack(fill=BOTH, expand=YES)
-
-        # Header
-        ttk.Label(
+        """Build UI with inner-frame padding strategy and safe packing order."""
+        
+        # 1. FIXED BOTTOM TOOLBAR (Pack FIRST to guarantee visibility)
+        bottom_toolbar = ttk.Frame(self.root)
+        bottom_toolbar.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # Visual separator
+        ttk.Separator(bottom_toolbar, orient="horizontal").pack(fill=tk.X)
+        
+        toolbar_inner = ttk.Frame(bottom_toolbar, padding=15)
+        toolbar_inner.pack(fill=tk.X)
+        
+        safe_widget_create(
+            ttk.Button,
+            toolbar_inner,
+            text="📁 Select Folder",
+            command=self.browse_directory,
+            bootstyle="secondary"
+        ).pack(side=tk.LEFT)
+        
+        self.start_btn = safe_widget_create(
+            ttk.Button,
+            toolbar_inner,
+            text="🚀 START CONVERSION",
+            command=self.start_conversion,
+            bootstyle="warning",
+            width=35
+        )
+        self.start_btn.pack(side=tk.RIGHT)
+        
+        # 2. MAIN SCROLLABLE CONTENT (Pack AFTER toolbar)
+        container = ttk.Frame(self.root)
+        container.pack(fill=tk.BOTH, expand=tk.YES, padx=20, pady=20)
+        
+        # Safety Banner
+        self.safety_banner = safe_widget_create(
+            ttk.Label,
             container,
-            text="🖼️ TIFF to HEIC/LZW Converter",
-            font=("Helvetica", 20, "bold")
-        ).pack(pady=(0, 20))
-
+            text="🔒 DRY RUN MODE ACTIVE",
+            anchor=tk.CENTER,
+            font=("Helvetica", 11, "bold"),
+            bootstyle="inverse-warning"
+        )
+        self.safety_banner.pack(fill=tk.X, pady=(0, 15))
+        
         # === Directory Selection ===
         dir_frame = ttk.LabelFrame(container, text="Source Directory")
-        dir_frame.pack(fill=X, pady=10)
+        dir_frame.pack(fill=tk.X, pady=5)
         
         dir_inner = ttk.Frame(dir_frame, padding=10)
-        dir_inner.pack(fill=X)
+        dir_inner.pack(fill=tk.X)
         
-        self.path_var = ttk.StringVar(value="No directory selected")
+        self.path_var = tk.StringVar(value="No directory selected")
         ttk.Entry(
             dir_inner,
             textvariable=self.path_var,
             state="readonly"
-        ).pack(side=LEFT, fill=X, expand=YES, padx=(0, 10))
+        ).pack(side=tk.LEFT, fill=tk.X, expand=tk.YES, padx=(0, 10))
         
-        ttk.Button(
+        safe_widget_create(
+            ttk.Button,
             dir_inner,
             text="Browse...",
-            command=self.browse_directory
-        ).pack(side=RIGHT)
-
+            command=self.browse_directory,
+            bootstyle="secondary-outline"
+        ).pack(side=tk.RIGHT)
+        
         # === Workflow Configuration ===
         work_frame = ttk.LabelFrame(container, text="Epson FastFoto Workflow")
-        work_frame.pack(fill=X, pady=10)
+        work_frame.pack(fill=tk.X, pady=5)
         
         work_inner = ttk.Frame(work_frame, padding=10)
-        work_inner.pack(fill=X)
+        work_inner.pack(fill=tk.X)
         
-        self.epson_mode = ttk.BooleanVar(value=True)
-        ttk.Checkbutton(
+        self.epson_mode = tk.BooleanVar(value=True)
+        safe_widget_create(
+            ttk.Checkbutton,
             work_inner,
-            text="Enable Epson FastFoto Mode",
+            text="Enable Smart Variant Selection (Epson Mode)",
             variable=self.epson_mode,
-            bootstyle="info-toolbutton"
-        ).pack(anchor=W)
+            bootstyle="success-round-toggle"
+        ).pack(anchor=tk.W, pady=2)
         
-        # Convert All option
-        self.convert_all_var = ttk.BooleanVar(value=False)
-        ttk.Checkbutton(
+        self.convert_all_var = tk.BooleanVar(value=False)
+        safe_widget_create(
+            ttk.Checkbutton,
             work_inner,
-            text="Convert ALL variants (skip selection, process base, _a, and _b)",
+            text="Convert ALL variants (Skip quality analysis)",
             variable=self.convert_all_var,
             bootstyle="warning-round-toggle"
-        ).pack(anchor=W, padx=20, pady=5)
+        ).pack(anchor=tk.W, padx=25, pady=2)
         
-        # Variant selection policy
         policy_frame = ttk.Frame(work_inner)
-        policy_frame.pack(fill=X, padx=20, pady=5)
+        policy_frame.pack(fill=tk.X, padx=25, pady=5)
         
-        ttk.Label(policy_frame, text="Variant Selection:").pack(side=LEFT)
-        self.variant_policy = ttk.StringVar(value="auto")
-        ttk.Radiobutton(
-            policy_frame, text="Auto (Quality)", 
-            variable=self.variant_policy, value="auto"
-        ).pack(side=LEFT, padx=5)
-        ttk.Radiobutton(
-            policy_frame, text="Prefer Base", 
-            variable=self.variant_policy, value="prefer_base"
-        ).pack(side=LEFT, padx=5)
-        ttk.Radiobutton(
-            policy_frame, text="Prefer _a", 
-            variable=self.variant_policy, value="prefer_a"
-        ).pack(side=LEFT, padx=5)
+        ttk.Label(policy_frame, text="Policy:").pack(side=tk.LEFT)
+        self.variant_policy = tk.StringVar(value="auto")
+        for val, txt in [("auto", "Auto"), ("prefer_base", "Base"), ("prefer_a", "_a")]:
+            ttk.Radiobutton(
+                policy_frame,
+                text=txt,
+                variable=self.variant_policy,
+                value=val
+            ).pack(side=tk.LEFT, padx=10)
         
-        # Informational note
-        ttk.Label(
-            work_inner,
-            text="ℹ️ Backside (_b) files are ALWAYS converted automatically\n"
-                 "   Selection only applies to base vs _a variants",
-            font=("Helvetica", 9, "italic"),
-            bootstyle="info"
-        ).pack(anchor=W, padx=20, pady=(2, 5))
-
-        # === EXECUTION SAFETY (Prominent Section) ===
-        safety_frame = ttk.LabelFrame(container, text="⚠️ Execution Safety")
-        safety_frame.pack(fill=X, pady=15)
-        
-        safety_inner = ttk.Frame(safety_frame, padding=10)
-        safety_inner.pack(fill=X)
-        
-        self.dry_run_var = ttk.BooleanVar(value=True)
-        self.dry_run_chk = ttk.Checkbutton(
-            safety_inner,
-            text="🔒 DRY RUN MODE (Preview only, no files written or moved)",
-            variable=self.dry_run_var,
-            bootstyle="danger-round-toggle",
-            command=self._on_dry_run_toggle
-        )
-        self.dry_run_chk.pack(fill=X)
-        
-        # Status badge
-        badge_frame = ttk.Frame(safety_inner)
-        badge_frame.pack(fill=X, pady=(8, 0))
-        
-        self.dry_status_label = ttk.Label(
-            badge_frame,
-            text="DRY RUN: ENABLED",
-            font=("Helvetica", 11, "bold"),
-            bootstyle="warning"
-        )
-        self.dry_status_label.pack(side=LEFT)
-
         # === Conversion Options ===
-        opt_frame = ttk.LabelFrame(container, text="Conversion Options")
-        opt_frame.pack(fill=X, pady=10)
+        opt_frame = ttk.LabelFrame(container, text="Output Options")
+        opt_frame.pack(fill=tk.X, pady=5)
         
         opt_inner = ttk.Frame(opt_frame, padding=10)
-        opt_inner.pack(fill=X)
-
-        self.create_lzw = ttk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            opt_inner,
-            text="Create LZW Compressed TIFF",
+        opt_inner.pack(fill=tk.X)
+        
+        # LZW Column
+        lzw_frame = ttk.Frame(opt_inner)
+        lzw_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=tk.YES)
+        
+        self.create_lzw = tk.BooleanVar(value=True)
+        safe_widget_create(
+            ttk.Checkbutton,
+            lzw_frame,
+            text="Create Lossless TIFF",
             variable=self.create_lzw,
-            bootstyle="round-toggle"
-        ).pack(anchor=W, pady=2)
-
-        # Compression type
-        comp_frame = ttk.Frame(opt_inner)
-        comp_frame.pack(fill=X, padx=20, pady=2)
+            bootstyle="success-round-toggle"
+        ).pack(anchor=tk.W)
         
-        ttk.Label(comp_frame, text="Compression:").pack(side=LEFT)
-        self.compression_type = ttk.StringVar(value="lzw")
-        ttk.Radiobutton(
-            comp_frame, text="LZW",
-            variable=self.compression_type, value="lzw"
-        ).pack(side=LEFT, padx=5)
-        ttk.Radiobutton(
-            comp_frame, text="DEFLATE (smaller)",
-            variable=self.compression_type, value="deflate"
-        ).pack(side=LEFT)
-
-        self.create_heic = ttk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            opt_inner,
-            text="Create HEIC (High Efficiency)",
+        comp_frame = ttk.Frame(lzw_frame)
+        comp_frame.pack(anchor=tk.W, padx=25, pady=5)
+        
+        ttk.Label(comp_frame, text="Compression:").pack(side=tk.LEFT)
+        self.compression_type = tk.StringVar(value="lzw")
+        ttk.Radiobutton(comp_frame, text="LZW", variable=self.compression_type, value="lzw").pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(comp_frame, text="DEFLATE", variable=self.compression_type, value="deflate").pack(side=tk.LEFT)
+        
+        # HEIC Column
+        heic_frame = ttk.Frame(opt_inner)
+        heic_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=tk.YES)
+        
+        self.create_heic = tk.BooleanVar(value=True)
+        safe_widget_create(
+            ttk.Checkbutton,
+            heic_frame,
+            text="Create HEIC",
             variable=self.create_heic,
-            bootstyle="round-toggle"
-        ).pack(anchor=W, pady=2)
-
-        # HEIC quality
-        quality_frame = ttk.Frame(opt_inner)
-        quality_frame.pack(fill=X, padx=20, pady=5)
+            bootstyle="success-round-toggle"
+        ).pack(anchor=tk.W)
         
-        ttk.Label(quality_frame, text="HEIC Quality:").pack(side=LEFT, padx=(0, 10))
-        self.quality_var = ttk.IntVar(value=90)
-        ttk.Scale(
+        quality_frame = ttk.Frame(heic_frame)
+        quality_frame.pack(anchor=tk.W, padx=25, pady=5)
+        
+        ttk.Label(quality_frame, text="Quality:").pack(side=tk.LEFT, padx=(0, 5))
+        self.quality_var = tk.IntVar(value=90)
+        safe_widget_create(
+            ttk.Scale,
             quality_frame,
             from_=1, to=100,
             variable=self.quality_var,
             bootstyle="info"
-        ).pack(side=LEFT, fill=X, expand=YES, padx=(0, 10))
+        ).pack(side=tk.LEFT, fill=tk.X, expand=tk.YES)
         
-        self.quality_label = ttk.Label(quality_frame, text="90")
-        self.quality_label.pack(side=LEFT)
-        self.quality_var.trace_add("write", lambda *a: self.quality_label.config(
-            text=str(self.quality_var.get())
-        ))
-
-        # === Progress ===
-        self.progress_var = ttk.DoubleVar(value=0)
-        self.progress_bar = ttk.Progressbar(
+        self.quality_label = ttk.Label(quality_frame, text="90", width=3)
+        self.quality_label.pack(side=tk.LEFT)
+        self.quality_var.trace_add("write", lambda *a: self.quality_label.config(text=str(self.quality_var.get())))
+        
+        # === Execution Safety ===
+        # CRITICAL: Do NOT pass bootstyle to LabelFrame - use safe_widget_create or omit
+        dry_frame = ttk.LabelFrame(container, text="⚠️ Execution Safety")
+        dry_frame.pack(fill=tk.X, pady=10)
+        
+        dry_inner = ttk.Frame(dry_frame, padding=10)
+        dry_inner.pack(fill=tk.X)
+        
+        self.dry_run_var = tk.BooleanVar(value=True)
+        safe_widget_create(
+            ttk.Checkbutton,
+            dry_inner,
+            text="🔒 DRY RUN MODE (Simulation Only - Recommended)",
+            variable=self.dry_run_var,
+            bootstyle="danger-round-toggle",
+            command=self._on_dry_run_toggle
+        ).pack(anchor=tk.W)
+        
+        # === Progress & Logs ===
+        self.progress_var = tk.DoubleVar(value=0)
+        self.progress_bar = safe_widget_create(
+            ttk.Progressbar,
             container,
             variable=self.progress_var,
             bootstyle="success-striped",
             maximum=100
         )
-        self.progress_bar.pack(fill=X, pady=(15, 5))
+        self.progress_bar.pack(fill=tk.X, pady=(15, 5))
         
-        self.status_var = ttk.StringVar(value="Ready")
-        ttk.Label(container, textvariable=self.status_var).pack()
-
-        # === Log Area ===
-        ttk.Label(container, text="Processing Log:").pack(anchor=W, pady=(10, 5))
-        self.log_area = ScrolledText(container, height=12, autohide=True)
-        self.log_area.pack(fill=BOTH, expand=YES)
-
-        # === Action Button ===
-        btn_frame = ttk.Frame(container)
-        btn_frame.pack(fill=X, pady=(15, 0))
+        self.status_var = tk.StringVar(value="Ready")
+        ttk.Label(container, textvariable=self.status_var, font=("Helvetica", 9)).pack(anchor=tk.W)
         
-        self.start_btn = ttk.Button(
-            btn_frame,
-            text="🚀 START CONVERSION (DRY RUN)",
-            bootstyle="warning",
-            command=self.start_conversion,
-            state=DISABLED
-        )
-        self.start_btn.pack(side=RIGHT)
+        # Log Area with robust fallback
+        try:
+            self.log_area = ScrolledText(container, height=12, autohide=True)
+        except TypeError:
+            self.log_area = ScrolledText(container, height=12)
+        except Exception:
+            # Final fallback using plain tk.Text
+            log_wrapper = ttk.Frame(container)
+            log_wrapper.pack(fill=tk.BOTH, expand=tk.YES)
+            self.log_area = tk.Text(log_wrapper, height=12, wrap="word")
+            scrollbar = tk.Scrollbar(log_wrapper, command=self.log_area.yview)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            self.log_area.config(yscrollcommand=scrollbar.set)
+            self.log_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=tk.YES)
+        else:
+            self.log_area.pack(fill=tk.BOTH, expand=tk.YES)
 
     def _on_dry_run_toggle(self):
-        """Handle dry-run toggle with confirmation and UI updates."""
-        enabled = bool(self.dry_run_var.get())
-        
-        # Confirmation when disabling dry-run
-        if not enabled:
+        """Handle dry-run toggle with confirmation."""
+        if not self.dry_run_var.get():
             confirm = messagebox.askyesno(
-                "Disable Dry Run",
-                "⚠️ You are about to DISABLE Dry Run.\n\n"
-                "This will allow the tool to:\n"
-                "• Write new LZW and HEIC files\n"
-                "• Move original files to uncompressed/\n\n"
-                "Are you sure you want to proceed?"
+                "⚠️ Disable Dry Run?",
+                "Switching to LIVE MODE:\n\n"
+                "• Files will be written to disk\n"
+                "• Originals will be moved\n"
+                "• Changes are permanent\n\n"
+                "Continue?"
             )
             if not confirm:
                 self.dry_run_var.set(True)
                 return
         
-        # Update UI
         self._update_dry_run_ui()
         self._log_dry_run_status()
 
     def _update_dry_run_ui(self):
-        """Update all dry-run visual indicators."""
-        enabled = bool(self.dry_run_var.get())
+        """Update visual elements based on dry-run state."""
+        is_dry = bool(self.dry_run_var.get())
         
-        if enabled:
-            self.dry_status_label.config(
-                text="DRY RUN: ENABLED",
-                bootstyle="warning"
-            )
-            self.start_btn.config(
-                text="🚀 START CONVERSION (DRY RUN)",
-                bootstyle="warning"
-            )
+        if is_dry:
+            try:
+                self.safety_banner.config(
+                    text="🔒 DRY RUN MODE ACTIVE (Simulation)",
+                    bootstyle="inverse-warning"
+                )
+            except Exception:
+                self.safety_banner.config(text="🔒 DRY RUN MODE ACTIVE (Simulation)")
+            
+            try:
+                self.start_btn.config(
+                    text="🚀 START CONVERSION (DRY RUN)",
+                    bootstyle="warning"
+                )
+            except Exception:
+                self.start_btn.config(text="🚀 START CONVERSION (DRY RUN)")
         else:
-            self.dry_status_label.config(
-                text="DRY RUN: DISABLED ⚠️",
-                bootstyle="danger"
-            )
-            self.start_btn.config(
-                text="🚀 START CONVERSION (APPLY CHANGES)",
-                bootstyle="success"
-            )
+            try:
+                self.safety_banner.config(
+                    text="⚠️ LIVE MODE - FILES WILL BE MODIFIED",
+                    bootstyle="inverse-danger"
+                )
+            except Exception:
+                self.safety_banner.config(text="⚠️ LIVE MODE - FILES WILL BE MODIFIED")
+            
+            try:
+                self.start_btn.config(
+                    text="🔥 APPLY CHANGES (LIVE)",
+                    bootstyle="success"
+                )
+            except Exception:
+                self.start_btn.config(text="🔥 APPLY CHANGES (LIVE)")
 
     def _log_dry_run_status(self):
-        """Log current dry-run status to console."""
-        enabled = bool(self.dry_run_var.get())
-        if enabled:
-            self.log("=" * 60)
-            self.log("🔒 DRY RUN MODE: ENABLED")
-            self.log("   • No files will be written")
-            self.log("   • No files will be moved")
-            self.log("   • All operations are simulated")
-            self.log("=" * 60 + "\n")
+        """Log current execution mode to console."""
+        is_dry = bool(self.dry_run_var.get())
+        separator = "=" * 50
+        
+        self.log(separator)
+        if is_dry:
+            self.log("🔒 DRY RUN MODE ENABLED (Default)")
+            self.log("   • No files will be modified")
+            self.log("   • Operations are simulated")
         else:
-            self.log("=" * 60)
-            self.log("⚠️  DRY RUN MODE: DISABLED")
-            self.log("   • Files WILL be written to LZW_compressed/ and HEIC/")
-            self.log("   • Originals WILL be moved to uncompressed/")
+            self.log("⚠️ LIVE MODE ENABLED")
+            self.log("   • Files WILL be modified")
             self.log("   • Changes are PERMANENT")
-            self.log("=" * 60 + "\n")
+        self.log(separator)
+
+    def log(self, message):
+        """Append message to log area with timestamp."""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        try:
+            self.log_area.insert(tk.END, f"[{timestamp}] {message}\n")
+            self.log_area.see(tk.END)
+        except Exception:
+            # Fallback to stdout if log_area not available
+            print(f"[{timestamp}] {message}")
 
     def browse_directory(self):
         """Browse for source directory."""
-        path = filedialog.askdirectory(title="Select Folder with TIFF Files")
+        path = filedialog.askdirectory(title="Select TIFF Folder")
         if path:
             self.source_dir = Path(path)
             self.path_var.set(path)
-            self.log(f"✓ Selected directory: {path}\n")
-            self.start_btn.config(state=NORMAL)
-
-    def log(self, message):
-        """Append message to log area."""
-        self.log_area.insert(END, f"{message}\n")
-        self.log_area.see(END)
+            self.log(f"✓ Selected: {path}")
 
     def start_conversion(self):
-        """Start the conversion process."""
+        """Primary entry point for conversion."""
         if not self.source_dir:
-            messagebox.showerror("Error", "Please select a directory first")
+            messagebox.showwarning("Input Required", "Please select a source folder.")
             return
         
-        if not self.create_lzw.get() and not self.create_heic.get():
-            messagebox.showwarning("Warning", "Please select at least one output format")
+        if not (self.create_lzw.get() or self.create_heic.get()):
+            messagebox.showwarning("Input Required", "Select at least one output format.")
             return
-
+        
         self.is_processing = True
-        self.start_btn.config(state=DISABLED)
-        self.log_area.delete("1.0", END)
-        
-        # Log execution mode
+        self.start_btn.config(state=tk.DISABLED)
+        try:
+            self.log_area.delete("1.0", tk.END)
+        except Exception:
+            pass
         self._log_dry_run_status()
-        self.log(f"🚀 Starting conversion...\n")
         
         threading.Thread(target=self._run_conversion, daemon=True).start()
 
@@ -421,75 +450,44 @@ class TIFFConverterGUI:
             }
             
             if self.epson_mode.get():
-                self.root.after(0, lambda: self.log("📸 Epson FastFoto Workflow\n"))
                 results = process_epson_folder(
                     self.source_dir,
                     options,
                     progress_callback=self.update_progress
                 )
-                report_name = "epson_conversion_report.json"
             else:
-                # Standard batch processing
-                tiff_files = []
-                for ext in ["*.tif", "*.tiff", "*.TIF", "*.TIFF"]:
-                    tiff_files.extend(list(self.source_dir.glob(ext)))
-                
-                if not tiff_files:
-                    self.root.after(0, lambda: messagebox.showinfo(
-                        "No Files", "No TIFF files found in selected directory"
-                    ))
-                    self._finish_conversion()
+                files = [f for f in self.source_dir.glob("*.tif*") if f.is_file()]
+                if not files:
+                    self.root.after(0, lambda: messagebox.showinfo("No Files", "No TIFFs found."))
                     return
-
-                options["output_dir"] = self.source_dir
-                options["workers"] = os.cpu_count() or 4
-                results = batch_process(tiff_files, options, progress_callback=self.update_progress)
-                report_name = "conversion_report.json"
+                options['output_dir'] = self.source_dir
+                results = batch_process(files, options, progress_callback=self.update_progress)
             
-            # Save report
-            report_path = self.source_dir / report_name
-            save_report(results, report_path)
-            
-            # Summary
-            success_count = sum(1 for r in results if r.success)
-            total_count = len(results)
-            
-            dry_msg = " (DRY RUN - no changes made)" if options['dry_run'] else ""
-            
-            self.root.after(0, lambda: self.log(
-                f"\n{'=' * 60}\n"
-                f"✅ Conversion complete{dry_msg}\n"
-                f"   Processed: {success_count}/{total_count}\n"
-                f"   Report: {report_name}\n"
-                f"{'=' * 60}"
-            ))
-            
-            self.root.after(0, lambda: messagebox.showinfo(
-                "Complete",
-                f"Processed {success_count}/{total_count} files successfully.\n\n"
-                f"Report saved: {report_name}"
-            ))
+            success = sum(1 for r in results if r.success)
+            self.root.after(0, lambda: self.log(f"\n✅ Finished: {success}/{len(results)} successful"))
             
         except Exception as e:
-            self.root.after(0, lambda: self.log(f"\n❌ Error: {str(e)}"))
-            self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
+            logger.exception("Conversion failed")
+            self.root.after(0, lambda: self.log(f"\n❌ Error: {e}"))
         finally:
             self.root.after(0, self._finish_conversion)
 
     def _finish_conversion(self):
-        """Cleanup after conversion."""
+        """Reset UI after conversion completes."""
         self.is_processing = False
-        self.start_btn.config(state=NORMAL)
+        self.start_btn.config(state=tk.NORMAL)
+        self.progress_var.set(0)
         self.status_var.set("Ready")
 
     def update_progress(self, current, total):
-        """Update progress bar."""
-        percentage = (current / total) * 100 if total > 0 else 0
-        self.root.after(0, lambda: self.progress_var.set(percentage))
+        """Update progress from background thread."""
+        pct = (current / total * 100) if total > 0 else 0
+        self.root.after(0, lambda: self.progress_var.set(pct))
         self.root.after(0, lambda: self.status_var.set(f"Processing: {current}/{total}"))
 
 
 def main():
+    """Entry point for GUI application."""
     app = TIFFConverterGUI()
     app.root.mainloop()
 
