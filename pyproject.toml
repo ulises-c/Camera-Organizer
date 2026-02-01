@@ -21,6 +21,11 @@ exifread = "^3.3.1"
 tqdm = "^4.66.0"
 appdirs = "^1.4.4"
 ttkbootstrap = "^1.10.1"
+numpy = "^1.26.0"
+scikit-image = { version = "^0.22.0", optional = true }
+
+[tool.poetry.extras]
+ssim = ["scikit-image"]
 
 [tool.poetry.scripts]
 photo-organizer = "photo_organizer.launcher:main"

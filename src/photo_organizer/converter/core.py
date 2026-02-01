@@ -48,15 +48,16 @@ def create_lzw_copy(
     source_path: Path,
     output_path: Path,
     verify: bool = True,
-    dry_run: bool = False
+    dry_run: bool = False,
+    compression: str = 'lzw'
 ) -> ConversionResult:
-    """Create an LZW-compressed copy of a TIFF file."""
+    """Create a compressed copy of a TIFF file with configurable compression."""
     start_time = time.time()
 
     result = ConversionResult(
         source_path=str(source_path),
         output_path=str(output_path),
-        conversion_type="LZW",
+        conversion_type=f"TIFF-{compression.upper()}",
         success=False,
         source_size_bytes=source_path.stat().st_size
     )
@@ -64,10 +65,16 @@ def create_lzw_copy(
     if dry_run:
         result.success = True
         result.output_size_bytes = 0
+        result.warnings.append("DRY RUN - no files written")
         result.duration_seconds = time.time() - start_time
         return result
 
     try:
+        compression_map = {
+            'lzw': 'tiff_lzw',
+            'deflate': 'tiff_adobe_deflate'
+        }
+        
         with Image.open(source_path) as img:
             bit_depth = get_bit_depth(img)
             
@@ -75,9 +82,9 @@ def create_lzw_copy(
             exif = img.info.get("exif")
             icc_profile = img.info.get("icc_profile")
 
-            # Save with LZW compression
+            # Save with specified compression
             save_kwargs = {
-                "compression": "tiff_lzw",
+                "compression": compression_map.get(compression, 'tiff_lzw'),
             }
             if exif:
                 save_kwargs["exif"] = exif
@@ -96,14 +103,21 @@ def create_lzw_copy(
             try:
                 with Image.open(output_path) as verify_img:
                     verify_img.verify()
+                    # Re-open for deeper check
+                with Image.open(output_path) as verify_img:
+                    _ = verify_img.load()
                 result.verified = True
             except Exception as e:
-                result.warnings.append(f"Verification warning: {str(e)}")
-                result.verified = False
+                raise ValueError(f"Verification failed: {e}")
+
+        # Calculate compression ratio
+        ratio = (1 - result.output_size_bytes / result.source_size_bytes) * 100
+        result.warnings.append(f"Compression: {ratio:.1f}% reduction")
 
     except Exception as e:
         result.error_message = str(e)
         result.success = False
+        logger.error(f"LZW conversion failed for {source_path.name}: {e}")
 
     result.duration_seconds = time.time() - start_time
     return result
@@ -208,11 +222,12 @@ def process_single_file(file_path: Path, options: dict) -> List[ConversionResult
     results = []
     
     output_dir = options.get("output_dir", file_path.parent)
+    compression = options.get("compression", "lzw")
     
     # LZW conversion
     if options.get("create_lzw", True):
         lzw_output = output_dir / f"{file_path.stem}_lzw.tif"
-        results.append(create_lzw_copy(file_path, lzw_output))
+        results.append(create_lzw_copy(file_path, lzw_output, compression=compression))
     
     # HEIC conversion
     if options.get("create_heic", False):
@@ -261,6 +276,149 @@ def batch_process(
                     
             except Exception as e:
                 logger.error(f"Processing error: {e}")
+    
+    return results
+
+
+def process_epson_folder(
+    folder_path: Path,
+    options: dict,
+    progress_callback=None
+) -> List[ConversionResult]:
+    """
+    Process an Epson FastFoto folder with automatic variant selection.
+    
+    Workflow:
+    1. Group files by stem (handling _a/_b variants)
+    2. Choose best front-side image per group
+    3. Convert to LZW and HEIC
+    4. Move originals to uncompressed/ (backside files to backside/ subfolder)
+    
+    Args:
+        folder_path: Source directory
+        options: Configuration dict with keys:
+            - variant_policy: 'auto' | 'prefer_base' | 'prefer_a'
+            - compression: 'lzw' | 'deflate'
+            - create_lzw: bool
+            - create_heic: bool
+            - heic_quality: int (-1 for lossless)
+            - verify: bool
+            - dry_run: bool
+    """
+    from photo_organizer.converter.variant_selection import group_variants, choose_best_variant
+    
+    # Create output directories
+    lzw_dir = folder_path / "LZW_compressed"
+    heic_dir = folder_path / "HEIC"
+    uncompressed_dir = folder_path / "uncompressed"
+    backside_dir = uncompressed_dir / "backside"
+    
+    if not options.get('dry_run', False):
+        for d in [lzw_dir, heic_dir, uncompressed_dir, backside_dir]:
+            d.mkdir(parents=True, exist_ok=True)
+    
+    # Find all TIFF files
+    tiff_files = []
+    for ext in ['*.tif', '*.tiff', '*.TIF', '*.TIFF']:
+        tiff_files.extend(folder_path.glob(ext))
+    
+    # Filter out files already in subdirectories
+    tiff_files = [f for f in tiff_files if f.parent == folder_path]
+    
+    if not tiff_files:
+        logger.warning(f"No TIFF files found in {folder_path}")
+        return []
+    
+    # Group by stem
+    groups = group_variants(tiff_files)
+    
+    logger.info(f"Found {len(groups)} unique images with {len(tiff_files)} total files")
+    
+    results = []
+    total = len(groups)
+    
+    for idx, (stem, variants) in enumerate(groups.items(), 1):
+        # Choose best variant
+        policy = options.get('variant_policy', 'auto')
+        chosen, selection_info = choose_best_variant(variants, policy=policy)
+        
+        # Log selection
+        logger.info(f"[{idx}/{total}] {stem}: chose {chosen.name} ({selection_info['reason']})")
+        
+        # Define output paths
+        lzw_output = lzw_dir / f"{stem}.LZW.tif"
+        heic_output = heic_dir / f"{stem}.heic"
+        
+        # Track current group's results separately
+        group_results = []
+        
+        # Convert to LZW
+        if options.get('create_lzw', True):
+            compression = options.get('compression', 'lzw')
+            res_lzw = create_lzw_copy(
+                chosen,
+                lzw_output,
+                verify=options.get('verify', True),
+                dry_run=options.get('dry_run', False),
+                compression=compression
+            )
+            res_lzw.warnings.append(f"Selection: {selection_info['reason']}")
+            if selection_info.get('ambiguous'):
+                res_lzw.warnings.append("⚠️  AMBIGUOUS: Manual review recommended")
+            group_results.append(res_lzw)
+        
+        # Convert to HEIC
+        if options.get('create_heic', True):
+            quality = options.get('heic_quality', 90)
+            res_heic = create_heic_copy(
+                chosen,
+                heic_output,
+                quality=quality,
+                verify=options.get('verify', True),
+                dry_run=options.get('dry_run', False)
+            )
+            res_heic.warnings.append(f"Selection: {selection_info['reason']}")
+            if selection_info.get('ambiguous'):
+                res_heic.warnings.append("⚠️  AMBIGUOUS: Manual review recommended")
+            group_results.append(res_heic)
+        
+        # Add to master results
+        results.extend(group_results)
+        
+        # Move originals only if THIS group's conversions succeeded
+        if (not options.get('dry_run', False) and 
+            group_results and 
+            all(r.success for r in group_results)):
+            
+            for variant in variants:
+                try:
+                    # Determine destination
+                    if variant.stem.endswith('_b'):
+                        dest = backside_dir / variant.name
+                    else:
+                        dest = uncompressed_dir / variant.name
+                    
+                    # Handle duplicates
+                    if dest.exists():
+                        counter = 1
+                        base = dest.stem
+                        ext = dest.suffix
+                        while True:
+                            new_dest = dest.parent / f"{base}_dup{counter}{ext}"
+                            if not new_dest.exists():
+                                dest = new_dest
+                                break
+                            counter += 1
+                    
+                    # Move file
+                    variant.rename(dest)
+                    logger.debug(f"Moved {variant.name} → {dest.relative_to(folder_path)}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to move {variant.name}: {e}")
+        
+        if progress_callback:
+            progress_callback(idx, total)
     
     return results
 

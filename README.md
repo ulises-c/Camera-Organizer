@@ -26,11 +26,14 @@ A comprehensive toolkit for organizing photos, videos, and scans. Includes multi
 
 ### 🖼️ TIFF Converter
 
-- Convert TIFF to LZW-compressed TIFF
+- Convert TIFF to LZW/DEFLATE compressed TIFF
 - Convert TIFF to HEIC/HEIF format
+- Epson FastFoto FF-680W workflow with automatic variant selection
+- Intelligent quality-based selection between augmented (\_a) and base files
 - Metadata preservation (EXIF, ICC profiles)
 - Lossless and lossy compression options
 - Parallel processing for large batches
+- Automatic organization into LZW_compressed/, HEIC/, and uncompressed/ folders
 
 ## System Requirements
 
@@ -233,12 +236,19 @@ make clean
 
 ## Tested Devices
 
+### Cameras
+
 - Sony a6700
 - Sony a6400
 - Sony a6300
 - Sony RX100 VII
 - GoPro Hero 8 Black
 - iPhone 14 Pro Max
+
+### Scanners
+
+- Epson FastFoto FF-680W (with \_a augmented and \_b backside support)
+- Epson Perfection V39 II
 
 ## License
 
