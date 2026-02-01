@@ -20,11 +20,11 @@ except ImportError:
 
 def canonical_stem(path: Path) -> str:
     """
-    Return canonical stem removing _a/_b suffixes.
+    Return canonical stem removing _a/_b suffixes (case-insensitive).
     Example: '2000_May_0001_a' -> '2000_May_0001'
     """
     stem = path.stem
-    if stem.endswith('_a') or stem.endswith('_b'):
+    if stem.lower().endswith('_a') or stem.lower().endswith('_b'):
         return stem[:-2]
     return stem
 
@@ -162,10 +162,13 @@ def choose_best_variant(
     ssim_threshold: float = 0.98
 ) -> Tuple[Path, Dict]:
     """
-    Choose the best variant from a group.
+    Choose the best FRONT variant only.
+    
+    NOTE: Backside (_b) files must be filtered out before calling this.
+    This function only compares base vs _a variants.
     
     Args:
-        variants: List of file paths (base, _a, _b variants)
+        variants: List of file paths (should NOT include _b files)
         policy: 'auto' | 'prefer_base' | 'prefer_a'
         ssim_threshold: If SSIM > threshold, consider duplicates
     
@@ -173,75 +176,50 @@ def choose_best_variant(
         (chosen_path, selection_info)
     """
     if not variants:
-        raise ValueError("No variants provided")
+        raise ValueError("No variants provided for selection")
     
-    # Separate backside files
-    backside = [p for p in variants if p.stem.endswith('_b')]
-    front_candidates = [p for p in variants if not p.stem.endswith('_b')]
+    # Safety check: filter out backsides (case-insensitive)
+    front_candidates = [p for p in variants if not p.stem.lower().endswith('_b')]
     
     if not front_candidates:
-        # Only backside files (unusual)
-        logger.warning(f"Only backside files found for {variants[0].stem}")
-        return variants[0], {'reason': 'only_backside_available'}
+        raise ValueError("No front-side candidates provided - only backsides found")
     
-    # Single candidate, easy choice
     if len(front_candidates) == 1:
-        return front_candidates[0], {
-            'reason': 'single_candidate',
-            'backside_count': len(backside)
-        }
+        return front_candidates[0], {'reason': 'single_candidate'}
     
-    # Apply policy
-    base_file = next((p for p in front_candidates if not p.stem.endswith('_a')), None)
-    a_file = next((p for p in front_candidates if p.stem.endswith('_a')), None)
+    # Identify base and _a files (case-insensitive)
+    base_file = next((p for p in front_candidates if not p.stem.lower().endswith('_a')), None)
+    a_file = next((p for p in front_candidates if p.stem.lower().endswith('_a')), None)
     
+    # Policy-based selection
     if policy == 'prefer_base' and base_file:
         return base_file, {'reason': 'policy_prefer_base'}
-    
     if policy == 'prefer_a' and a_file:
         return a_file, {'reason': 'policy_prefer_a'}
     
-    # Auto mode: compute metrics
+    # Auto mode: quality metrics analysis
     results = []
     for path in front_candidates:
         metrics = compute_quality_metrics(path)
         score = compute_quality_score(metrics)
-        results.append({
-            'path': path,
-            'metrics': metrics,
-            'score': score
-        })
+        results.append({'path': path, 'score': score, 'metrics': metrics})
     
-    # Sort by score
     results.sort(key=lambda x: x['score'], reverse=True)
     
-    # Check if files are essentially duplicates via SSIM
-    ssim_value = None
-    if base_file and a_file and len(front_candidates) == 2:
-        ssim_value = compute_ssim(base_file, a_file)
-        if ssim_value and ssim_value >= ssim_threshold:
-            # Files are duplicates, prefer base for consistency
-            chosen = base_file
-            return chosen, {
+    # SSIM duplicate detection (avoid storing near-identical files)
+    if SSIM_AVAILABLE and base_file and a_file:
+        similarity = compute_ssim(base_file, a_file)
+        if similarity and similarity >= ssim_threshold:
+            return base_file, {
                 'reason': 'ssim_duplicate',
-                'ssim': ssim_value,
-                'scores': {r['path'].name: r['score'] for r in results}
+                'ssim': similarity,
+                'note': 'Base and _a are virtually identical'
             }
     
-    # Choose highest scoring
-    chosen = results[0]['path']
+    # Return highest quality
     score_diff = results[0]['score'] - results[1]['score'] if len(results) > 1 else 0
-    
-    info = {
+    return results[0]['path'], {
         'reason': 'quality_metrics',
-        'scores': {r['path'].name: r['score'] for r in results},
-        'score_difference': score_diff,
         'ambiguous': score_diff < 0.05,
-        'ssim': ssim_value,
-        'backside_count': len(backside)
+        'score_diff': score_diff
     }
-    
-    if info['ambiguous']:
-        logger.info(f"Ambiguous choice for {canonical_stem(chosen)}: score diff = {score_diff:.3f}")
-    
-    return chosen, info

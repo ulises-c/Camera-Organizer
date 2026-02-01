@@ -99,7 +99,7 @@ class TIFFConverterGUI:
         self.root = ttk.Window(
             title="TIFF Converter",
             themename="darkly",
-            size=(900, 850)
+            size=(900, 900)
         )
         self.source_dir = None
         self.is_processing = False
@@ -185,7 +185,7 @@ class TIFFConverterGUI:
         self.convert_all_var = ttk.BooleanVar(value=False)
         ttk.Checkbutton(
             work_inner,
-            text="Convert ALL variants (skip selection)",
+            text="Convert ALL variants (skip selection - process base, _a, and _b)",
             variable=self.convert_all_var,
             bootstyle="warning-round-toggle"
         ).pack(anchor=W, padx=20, pady=5)
@@ -197,6 +197,22 @@ class TIFFConverterGUI:
             font=("Helvetica", 9, "italic"),
             bootstyle="info"
         ).pack(anchor=W, padx=20, pady=2)
+
+        # Execution Safety Section
+        safety_frame = ttk.LabelFrame(container, text="Execution Safety")
+        safety_frame.pack(fill=X, pady=10)
+        
+        safety_inner = ttk.Frame(safety_frame, padding=10)
+        safety_inner.pack(fill=X)
+        
+        self.dry_run_var = ttk.BooleanVar(value=True)
+        dry_run_chk = ttk.Checkbutton(
+            safety_inner,
+            text="🔒 Dry Run Mode (Preview only - no files written or moved)",
+            variable=self.dry_run_var,
+            bootstyle="danger-round-toggle"
+        )
+        dry_run_chk.pack(fill=X, pady=5)
 
         # Options
         opt_frame = ttk.LabelFrame(container, text="Conversion Options")
@@ -331,7 +347,7 @@ class TIFFConverterGUI:
                 'create_heic': self.create_heic.get(),
                 'heic_quality': self.quality_var.get(),
                 'verify': True,
-                'dry_run': False,
+                'dry_run': self.dry_run_var.get(),
                 'variant_policy': self.variant_policy.get(),
                 'compression': self.compression_type.get(),
                 'convert_all_variants': self.convert_all_var.get()
@@ -371,8 +387,10 @@ class TIFFConverterGUI:
             success_count = sum(1 for r in results if r.success)
             total_count = len(results)
             
+            dry_run_msg = "\n** DRY RUN MODE - No changes made **" if options['dry_run'] else ""
+            
             self.root.after(0, lambda: self.log(
-                f"\n✅ Conversion complete!\n"
+                f"\n✅ Conversion complete!{dry_run_msg}\n"
                 f"   Successfully processed: {success_count}/{total_count}\n"
                 f"   Report saved: {report_name}"
             ))

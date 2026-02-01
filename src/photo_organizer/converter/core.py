@@ -5,6 +5,7 @@ Migrated from tiff-to-heic project with full functionality preserved.
 import time
 import json
 import logging
+import shutil
 from pathlib import Path
 from typing import List, Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -144,6 +145,7 @@ def create_heic_copy(
     if dry_run:
         result.success = True
         result.output_size_bytes = 0
+        result.warnings.append("DRY RUN - no files written")
         result.duration_seconds = time.time() - start_time
         return result
 
@@ -293,14 +295,7 @@ def process_epson_folder(
     - Selection only occurs between base and _a front variants
     - Option to convert all variants (skip selection entirely)
     - Originals moved only after successful conversion
-    
-    Workflow:
-    1. Group files by stem (handling _a/_b variants)
-    2. Separate backside (_b) from front candidates
-    3. For front files: apply selection or convert all based on options
-    4. For backside files: always convert (no comparison)
-    5. Convert selected files to LZW and/or HEIC
-    6. Move originals to uncompressed/ (backside files to backside/ subfolder)
+    - Dry run mode: No directories created, no files written/moved
     
     Args:
         folder_path: Source directory
@@ -316,17 +311,26 @@ def process_epson_folder(
     """
     from photo_organizer.converter.variant_selection import group_variants, choose_best_variant
     
+    dry_run = options.get('dry_run', False)
+    convert_all = options.get('convert_all_variants', False)
+    policy = options.get('variant_policy', 'auto')
+    create_lzw = options.get('create_lzw', True)
+    create_heic = options.get('create_heic', False)
+    compression = options.get('compression', 'lzw')
+    heic_quality = options.get('heic_quality', 90)
+    verify = options.get('verify', True)
+    
     # Create output directories
     lzw_dir = folder_path / "LZW_compressed"
     heic_dir = folder_path / "HEIC"
     uncompressed_dir = folder_path / "uncompressed"
     backside_dir = uncompressed_dir / "backside"
     
-    if not options.get('dry_run', False):
+    if not dry_run:
         for d in [lzw_dir, heic_dir, uncompressed_dir, backside_dir]:
             d.mkdir(parents=True, exist_ok=True)
     
-    # Find TIFF files in top-level folder only
+    # Find TIFF files (case-insensitive)
     tiff_files = []
     for ext in ['*.tif', '*.tiff', '*.TIF', '*.TIFF']:
         tiff_files.extend(folder_path.glob(ext))
@@ -340,128 +344,98 @@ def process_epson_folder(
     results = []
     total = len(groups)
     
-    convert_all = options.get('convert_all_variants', False)
-    create_lzw = options.get('create_lzw', True)
-    create_heic = options.get('create_heic', False)
-    compression = options.get('compression', 'lzw')
-    heic_quality = options.get('heic_quality', 90)
-    verify = options.get('verify', True)
-    dry_run = options.get('dry_run', False)
-    policy = options.get('variant_policy', 'auto')
-    
     for idx, (stem, variants) in enumerate(groups.items(), 1):
-        # Partition variants into front and backside
-        backside_files = [p for p in variants if p.stem.endswith('_b')]
-        front_candidates = [p for p in variants if not p.stem.endswith('_b')]
+        # Partition variants (case-insensitive suffix detection)
+        backside_files = [p for p in variants if p.stem.lower().endswith('_b')]
+        front_candidates = [p for p in variants if not p.stem.lower().endswith('_b')]
         
         logger.info(f"[{idx}/{total}] Group {stem}: "
                    f"{len(front_candidates)} front(s), {len(backside_files)} backside(s)")
         
+        # Build conversion queue
+        to_convert = []  # List of (Path, reason_string)
+        
+        # Handle front candidates
+        if convert_all:
+            for f in front_candidates:
+                to_convert.append((f, "convert_all_mode"))
+        elif front_candidates:
+            chosen, info = choose_best_variant(
+                front_candidates,
+                policy=policy,
+                ssim_threshold=options.get('ssim_threshold', 0.98)
+            )
+            to_convert.append((chosen, info.get('reason', 'selected')))
+        
+        # ALWAYS add all backside files (mandatory conversion)
+        for b in backside_files:
+            to_convert.append((b, "backside_auto_include"))
+        
         # Track per-file conversion success for safe archiving
-        file_success = {}
+        success_tracker = {}
         
-        # Determine which front files to convert
-        fronts_to_convert = []
-        selection_info = {}
-        
-        if not front_candidates:
-            logger.warning(f"No front candidates for {stem}")
-        elif convert_all:
-            # Convert all front variants (preserve suffixes)
-            fronts_to_convert = front_candidates
-            selection_info = {'reason': 'convert_all_variants'}
-            logger.info(f"Converting ALL {len(fronts_to_convert)} front variants")
-        else:
-            # Use selection logic (base vs _a only)
-            chosen, selection_info = choose_best_variant(front_candidates, policy=policy)
-            fronts_to_convert = [chosen]
-            logger.info(f"Selected {chosen.name} ({selection_info.get('reason')})")
-        
-        # Convert selected front files
-        for front_path in fronts_to_convert:
-            # Preserve original stem (including _a suffix if present)
-            out_stem = front_path.stem
+        # Execute conversions
+        for source_path, reason in to_convert:
             file_results = []
             
+            # LZW conversion
             if create_lzw:
-                lzw_output = lzw_dir / f"{out_stem}.LZW.tif"
-                res = create_lzw_copy(front_path, lzw_output, 
-                                     verify=verify, dry_run=dry_run, 
-                                     compression=compression)
-                res.warnings.append(f"Selection: {selection_info.get('reason')}")
-                if selection_info.get('ambiguous'):
-                    res.warnings.append("⚠️ AMBIGUOUS: manual review recommended")
+                out = lzw_dir / f"{source_path.stem}.LZW.tif"
+                res = create_lzw_copy(
+                    source_path, out,
+                    verify=verify,
+                    dry_run=dry_run,
+                    compression=compression
+                )
+                res.warnings.append(f"Selection reason: {reason}")
                 file_results.append(res)
                 results.append(res)
             
+            # HEIC conversion
             if create_heic:
-                heic_output = heic_dir / f"{out_stem}.heic"
-                res = create_heic_copy(front_path, heic_output,
-                                      quality=heic_quality, verify=verify, 
-                                      dry_run=dry_run)
-                res.warnings.append(f"Selection: {selection_info.get('reason')}")
+                out = heic_dir / f"{source_path.stem}.heic"
+                res = create_heic_copy(
+                    source_path, out,
+                    quality=heic_quality,
+                    verify=verify,
+                    dry_run=dry_run
+                )
+                res.warnings.append(f"Selection reason: {reason}")
                 file_results.append(res)
                 results.append(res)
             
-            # Track success for this file
-            file_success[front_path] = all(r.success for r in file_results) if file_results else False
+            success_tracker[source_path] = all(r.success for r in file_results) if file_results else False
         
-        # ALWAYS convert backside files (no comparison)
-        for back_path in backside_files:
-            # Preserve _b suffix in output names
-            out_stem = back_path.stem
-            file_results = []
-            
-            if create_lzw:
-                lzw_output = lzw_dir / f"{out_stem}.LZW.tif"
-                res = create_lzw_copy(back_path, lzw_output,
-                                     verify=verify, dry_run=dry_run,
-                                     compression=compression)
-                res.warnings.append("Backside: auto-converted (no comparison)")
-                file_results.append(res)
-                results.append(res)
-            
-            if create_heic:
-                heic_output = heic_dir / f"{out_stem}.heic"
-                res = create_heic_copy(back_path, heic_output,
-                                      quality=heic_quality, verify=verify,
-                                      dry_run=dry_run)
-                res.warnings.append("Backside: auto-converted (no comparison)")
-                file_results.append(res)
-                results.append(res)
-            
-            # Track success
-            file_success[back_path] = all(r.success for r in file_results) if file_results else False
-        
-        # Archive originals only after successful conversion (per-file basis)
+        # Archive originals (only if conversions succeeded and not dry-run)
         if not dry_run:
             for variant in variants:
-                if file_success.get(variant, False):
-                    try:
-                        # Determine destination
-                        if variant.stem.endswith('_b'):
-                            dest = backside_dir / variant.name
-                        else:
-                            dest = uncompressed_dir / variant.name
-                        
-                        # Handle naming conflicts
-                        if dest.exists():
-                            counter = 1
-                            base = dest.stem
-                            ext = dest.suffix
-                            while True:
-                                new_dest = dest.parent / f"{base}_dup{counter}{ext}"
-                                if not new_dest.exists():
-                                    dest = new_dest
-                                    break
-                                counter += 1
-                        
-                        variant.rename(dest)
-                        logger.debug(f"Moved {variant.name} → {dest.relative_to(folder_path)}")
-                    except Exception as e:
-                        logger.error(f"Failed to move {variant.name}: {e}")
-                else:
-                    logger.debug(f"Skipping move of {variant.name}: conversion not successful")
+                # Only move if this file was successfully converted
+                if variant in success_tracker and not success_tracker[variant]:
+                    logger.error(f"Skipping archive for {variant.name} - conversion failed")
+                    continue
+                
+                # Determine destination (case-insensitive backside detection)
+                dest_dir = backside_dir if variant.stem.lower().endswith('_b') else uncompressed_dir
+                dest_path = dest_dir / variant.name
+                
+                # Handle collisions
+                if dest_path.exists():
+                    counter = 1
+                    base = dest_path.stem
+                    ext = dest_path.suffix
+                    while True:
+                        new_dest = dest_dir / f"{base}_dup{counter}{ext}"
+                        if not new_dest.exists():
+                            dest_path = new_dest
+                            break
+                        counter += 1
+                
+                # Cross-filesystem safe move
+                try:
+                    shutil.move(str(variant), str(dest_path))
+                    logger.info(f"Archived: {variant.name} → {dest_path.relative_to(folder_path)}")
+                except Exception as e:
+                    logger.error(f"Failed to archive {variant.name}: {e}")
         
         if progress_callback:
             progress_callback(idx, total)
