@@ -5,8 +5,8 @@ A graphical interface for batch renaming files and folders containing 'UnknownCa
 import os
 import tkinter as tk
 from tkinter import filedialog
-from shared.camera_models import get_camera_models
-from shared.config import ALL_EXTENSIONS
+from photo_organizer.shared.camera_models import get_camera_models
+from photo_organizer.shared.config import ALL_EXTENSIONS
 
 
 def main():

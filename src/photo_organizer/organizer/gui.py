@@ -5,9 +5,9 @@ A graphical interface for organizing photos and videos by date and camera model.
 import os
 import tkinter as tk
 from tkinter import filedialog
-from organizer.core import organize_photos
-from shared.camera_models import get_camera_models
-from shared.config import ALL_EXTENSIONS
+from photo_organizer.organizer.core import organize_photos
+from photo_organizer.shared.camera_models import get_camera_models
+from photo_organizer.shared.config import ALL_EXTENSIONS
 
 
 def main():

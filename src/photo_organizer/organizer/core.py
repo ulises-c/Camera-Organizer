@@ -5,9 +5,9 @@ Organizes files by date and camera model with various options.
 import os
 import shutil
 from pathlib import Path
-from shared.metadata import get_creation_date, get_camera_model
-from shared.camera_models import get_camera_models, add_camera_model
-from shared.config import (
+from photo_organizer.shared.metadata import get_creation_date, get_camera_model
+from photo_organizer.shared.camera_models import get_camera_models, add_camera_model
+from photo_organizer.shared.config import (
     VIDEO_EXTENSIONS, VIDEO_EXTENSIONS_EXTRAS, PHOTO_EXTENSIONS, ALL_EXTENSIONS
 )
 

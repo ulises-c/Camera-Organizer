@@ -6,7 +6,7 @@ import os
 import re
 import tkinter as tk
 from tkinter import filedialog
-from shared.metadata import get_creation_date, get_camera_model
+from photo_organizer.shared.metadata import get_creation_date, get_camera_model
 
 
 def extract_date_and_model(folder_path):

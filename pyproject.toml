@@ -10,19 +10,16 @@ readme = "README.md"
 authors = ["Ulises Chavarria"]
 license = "MIT"
 packages = [
-    { include = "shared", from = "src" },
-    { include = "organizer", from = "src" },
-    { include = "renamer", from = "src" },
-    { include = "converter", from = "src" },
+    { include = "photo_organizer", from = "src" }
 ]
 
 [tool.poetry.dependencies]
 python = "^3.12"
-Pillow = "^10.0.0"
-pillow-heif = "^0.13.0"
-exifread = "^3.0.0"
+Pillow = "^10.4.0"
+pillow-heif = "^0.13.1"
+exifread = "^3.3.1"
 tqdm = "^4.66.0"
 appdirs = "^1.4.4"
 
 [tool.poetry.scripts]
-photo-organizer = "launcher:main"
+photo-organizer = "photo_organizer.launcher:main"

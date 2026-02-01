@@ -8,31 +8,30 @@ try:
     import tkinter as tk
     from tkinter import ttk
 except ImportError:
-    print("tkinter is required but not installed.")
+    print("Error: tkinter is required but not installed.")
+    print("On macOS with pyenv, run: make install-python-macos")
     sys.exit(1)
-
-PROJECT_ROOT = Path(__file__).resolve().parent
 
 TOOLS = [
     {
         "name": "📸 Photo & Video Organizer",
         "desc": "Sort files by date and camera model",
-        "script": PROJECT_ROOT / "organizer" / "gui.py",
+        "module": "photo_organizer.organizer.gui",
     },
     {
         "name": "📁 Folder Renamer",
         "desc": "Rename NNNYMMDD camera folders to YYYY-MM-DD",
-        "script": PROJECT_ROOT / "renamer" / "folder_gui.py",
+        "module": "photo_organizer.renamer.folder_gui",
     },
     {
         "name": "🏷️ Batch Renamer",
         "desc": "Fix 'UnknownCamera' in filenames",
-        "script": PROJECT_ROOT / "renamer" / "batch_gui.py",
+        "module": "photo_organizer.renamer.batch_gui",
     },
     {
         "name": "🖼️ TIFF Converter",
         "desc": "Convert TIFF to HEIC or LZW compression",
-        "script": PROJECT_ROOT / "converter" / "gui.py",
+        "module": "photo_organizer.converter.gui",
     }
 ]
 
@@ -41,7 +40,7 @@ class LauncherApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Photo Organizer Suite")
-        self.root.geometry("550x500")
+        self.root.geometry("600x520")
         self.center_window()
         self.create_widgets()
 
@@ -97,17 +96,17 @@ class LauncherApp:
         frame = tk.Frame(parent, pady=10)
         frame.pack(fill=tk.X)
 
-        # Tool name and description
+        # Left side: labels
         label_frame = tk.Frame(frame)
         label_frame.pack(fill=tk.X, side=tk.LEFT, expand=True)
-
+        
         tk.Label(
             label_frame,
             text=tool["name"],
             font=("Helvetica", 12, "bold"),
             anchor=tk.W
         ).pack(anchor=tk.W)
-
+        
         tk.Label(
             label_frame,
             text=tool["desc"],
@@ -116,24 +115,23 @@ class LauncherApp:
             anchor=tk.W
         ).pack(anchor=tk.W, pady=(2, 0))
 
-        # Launch button
+        # Right side: button
         btn = tk.Button(
             frame,
             text="Launch",
             width=12,
-            command=lambda s=tool['script']: self.launch_tool(s)
+            command=lambda m=tool["module"]: self.launch_tool(m)
         )
         btn.pack(side=tk.RIGHT)
 
-        if not tool['script'].exists():
-            btn.config(state='disabled')
-
-    def launch_tool(self, script_path: Path):
+    def launch_tool(self, module_name: str):
+        """Launch tool as separate process using module path."""
         try:
-            subprocess.Popen([sys.executable, str(script_path)])
-            self.status_var.set(f"Launched: {script_path.name}")
+            subprocess.Popen([sys.executable, "-m", module_name])
+            tool_name = module_name.split('.')[-1]
+            self.status_var.set(f"Launched: {tool_name}")
         except Exception as e:
-            self.status_var.set(f"Error: {e}")
+            self.status_var.set(f"Error launching {module_name}: {e}")
 
     def run(self):
         self.root.mainloop()
