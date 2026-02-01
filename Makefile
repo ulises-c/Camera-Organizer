@@ -7,7 +7,7 @@
 # make run
 
 # Define variables
-PYTHON_VERSION = 3.14
+PYTHON_VERSION = 3.12
 PYENV = pyenv
 
 # Check for required tools
@@ -40,7 +40,7 @@ install-python-macos: check-tools
 	$(PYENV) local $(PYTHON_VERSION)
 
 # Configure Poetry to use an in-project virtual environment and set it to use the current Python.
-create-env: install-python
+create-env: install-python-macos
 	@echo "Using Python version: $$(pyenv which python)"
 	@echo "Configuring Poetry for an in-project virtual environment..."
 	poetry config virtualenvs.in-project true

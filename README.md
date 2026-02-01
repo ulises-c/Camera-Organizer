@@ -37,7 +37,7 @@ A comprehensive toolkit for organizing photos, videos, and scans. Includes multi
 ### Prerequisites
 
 - macOS (tested on macOS 12+)
-- Python 3.14+
+- Python 3.12+
 - pyenv and Poetry (for development)
 
 ### Quick Setup
