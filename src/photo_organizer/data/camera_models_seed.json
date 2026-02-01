@@ -1,0 +1,38 @@
+[
+  {
+    "exif_name": "ILCE-6700",
+    "display_name": "Sony a6700",
+    "folder_name": "Sony a6700",
+    "aliases": ["A6700", "ILCE-6700", "Sony A6700"]
+  },
+  {
+    "exif_name": "ILCE-6400",
+    "display_name": "Sony a6400",
+    "folder_name": "Sony a6400",
+    "aliases": ["A6400", "ILCE-6400", "Sony A6400"]
+  },
+  {
+    "exif_name": "ILCE-6300",
+    "display_name": "Sony a6300",
+    "folder_name": "Sony a6300",
+    "aliases": ["A6300", "ILCE-6300", "Sony A6300"]
+  },
+  {
+    "exif_name": "DSC-RX100M7",
+    "display_name": "Sony RX100 VII",
+    "folder_name": "Sony RX100 VII",
+    "aliases": ["RX100M7", "RX100 VII", "DSC-RX100M7"]
+  },
+  {
+    "exif_name": "Hero8 Black",
+    "display_name": "GoPro Hero 8 Black",
+    "folder_name": "GoPro Hero 8 Black",
+    "aliases": ["Hero8", "HERO8 BLACK", "Hero 8"]
+  },
+  {
+    "exif_name": "iPhone 14 Pro Max",
+    "display_name": "iPhone 14 Pro Max",
+    "folder_name": "iPhone 14 Pro Max",
+    "aliases": ["iPhone14ProMax", "iPhone 14 Pro Max"]
+  }
+]
