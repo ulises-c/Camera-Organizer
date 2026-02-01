@@ -1,24 +1,12 @@
 """
 Batch Renamer for Unknown Cameras
---------------------------------
 A graphical interface for batch renaming files and folders containing 'UnknownCamera' in their name.
-
-Features:
-- Dropdown menu to select a known camera model
-- Renames all files/folders with 'UnknownCamera' to the selected model
-- Uses shared camera model list from main.py
-
-Usage:
-Run this script to launch the batch renamer GUI.
 """
-
 import os
 import tkinter as tk
 from tkinter import filedialog
-from main import extensions
-from camera_models_db import get_camera_models
-import subprocess
-import sys
+from shared.camera_models import get_camera_models
+from shared.config import ALL_EXTENSIONS
 
 
 def main():
@@ -64,7 +52,7 @@ def main():
             count = 0
             for root_dir, _, files in os.walk(folder_path):
                 count += sum(1 for file in files if any(file.upper().endswith(ext)
-                             for ext in extensions))
+                             for ext in ALL_EXTENSIONS))
             path_label.config(
                 text=f"Selected: {folder_path}\nTotal items: {count}")
         print(f"Selected folder: {folder_path}")

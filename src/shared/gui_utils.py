@@ -1,7 +1,11 @@
+"""
+Shared GUI utilities for tooltips and window management.
+"""
 import tkinter as tk
 
 
 class ToolTip:
+    """Simple tooltip implementation for tkinter widgets."""
     def __init__(self, widget, text):
         self.widget = widget
         self.text = text

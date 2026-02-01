@@ -1,23 +1,13 @@
 """
 Photo & Video Organizer GUI
-------------------
 A graphical interface for organizing photos and videos by date and camera model.
-
-Features:
-- Organize by camera model and/or add camera model to folder name
-- Optionally separate photos and videos into their own folders
-- Supports filtering by media type (photos, videos, or both)
-- Uses shared logic from main.py
-
-Usage:
-Run this script to launch the organizer GUI.
 """
-
 import os
 import tkinter as tk
 from tkinter import filedialog
-from main import organize_photos, extensions
-from camera_models_db import get_camera_models
+from organizer.core import organize_photos
+from shared.camera_models import get_camera_models
+from shared.config import ALL_EXTENSIONS
 
 
 def main():
@@ -77,7 +67,7 @@ def main():
             count = 0
             for root_dir, _, files in os.walk(folder_path):
                 count += sum(1 for file in files if any(file.upper().endswith(ext)
-                             for ext in extensions))
+                             for ext in ALL_EXTENSIONS))
             path_label.config(
                 text=f"Selected: {folder_path}\nTotal items: {count}")
         print(f"Selected folder: {folder_path}")

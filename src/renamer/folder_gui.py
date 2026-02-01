@@ -1,20 +1,16 @@
 """
 Folder Renamer for Camera-Generated Folders
-------------------------------------------
 A GUI to rename camera-generated folders (NNNYMMDD) to the convention YYYY-MM-DD[_CameraModel].
-
-- Scans subfolders in a selected directory.
-- For each folder matching NNNYMMDD, finds the first file with extractable metadata.
-- Renames the folder to YYYY-MM-DD[_CameraModel] based on that file.
 """
 import os
 import re
 import tkinter as tk
 from tkinter import filedialog
-from main import get_creation_date, get_camera_model
+from shared.metadata import get_creation_date, get_camera_model
 
 
 def extract_date_and_model(folder_path):
+    """Extract creation date and camera model from files in folder."""
     files = []
     for root, _, fs in os.walk(folder_path):
         for file in fs:
