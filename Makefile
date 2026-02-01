@@ -7,7 +7,7 @@
 # make run
 
 # Define variables
-PYTHON_VERSION = 3.11
+PYTHON_VERSION = 3.14
 PYENV = pyenv
 
 # Check for required tools

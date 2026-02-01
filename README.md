@@ -5,23 +5,27 @@ A comprehensive toolkit for organizing photos, videos, and scans. Includes multi
 ## Features
 
 ### 📸 Photo & Video Organizer
+
 - Sort files by date and camera model
 - Support for photos (.HIF, .ARW, .JPG) and videos (.MP4, .MOV)
 - Flexible organization options (by camera, by date, separate media types)
 - Automatic camera model detection and database management
 
 ### 📁 Folder Renamer
+
 - Rename camera-generated folders (NNNYMMDD format)
 - Convert to readable YYYY-MM-DD[_CameraModel] format
 - Metadata extraction from folder contents
 - Sanity checking for date consistency
 
 ### 🏷️ Batch Renamer
+
 - Fix 'UnknownCamera' references in filenames and folders
 - Support for custom camera model names
 - Bulk renaming operations
 
 ### 🖼️ TIFF Converter
+
 - Convert TIFF to LZW-compressed TIFF
 - Convert TIFF to HEIC/HEIF format
 - Metadata preservation (EXIF, ICC profiles)
@@ -33,7 +37,7 @@ A comprehensive toolkit for organizing photos, videos, and scans. Includes multi
 ### Prerequisites
 
 - macOS (tested on macOS 12+)
-- Python 3.11+
+- Python 3.14+
 - pyenv and Poetry (for development)
 
 ### Quick Setup
@@ -134,11 +138,13 @@ New camera models are automatically added when detected during organization.
 ## Supported File Types
 
 ### Photos
+
 - `.HIF` - High Efficiency Image Format
 - `.ARW` - Sony RAW
 - `.JPG` / `.JPEG` - JPEG images
 
 ### Videos
+
 - `.MP4` - MPEG-4 video
 - `.MOV` - QuickTime video
 - `.XML` - Video metadata (Sony, GoPro)
@@ -146,6 +152,7 @@ New camera models are automatically added when detected during organization.
 - `.LRV` - Low-resolution video
 
 ### TIFF
+
 - `.TIF` / `.TIFF` - Tagged Image File Format
 - Multi-page TIFF support (detection)
 - High bit-depth images (8-bit, 16-bit, 32-bit)

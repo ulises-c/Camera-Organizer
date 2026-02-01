@@ -13,11 +13,11 @@ packages = [
     { include = "shared", from = "src" },
     { include = "organizer", from = "src" },
     { include = "renamer", from = "src" },
-    { include = "converter", from = "src" }
+    { include = "converter", from = "src" },
 ]
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.14"
 Pillow = "^10.0.0"
 pillow-heif = "^0.13.0"
 exifread = "^3.0.0"
