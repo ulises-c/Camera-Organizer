@@ -180,6 +180,23 @@ class TIFFConverterGUI:
             policy_frame, text="Prefer _a", 
             variable=self.variant_policy, value="prefer_a"
         ).pack(side=LEFT, padx=5)
+        
+        # Convert all variants option
+        self.convert_all_var = ttk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            work_inner,
+            text="Convert ALL variants (skip selection)",
+            variable=self.convert_all_var,
+            bootstyle="warning-round-toggle"
+        ).pack(anchor=W, padx=20, pady=5)
+        
+        # Informational label about backside handling
+        ttk.Label(
+            work_inner,
+            text="ℹ️ Backside (_b) files are always converted regardless of selection mode",
+            font=("Helvetica", 9, "italic"),
+            bootstyle="info"
+        ).pack(anchor=W, padx=20, pady=2)
 
         # Options
         opt_frame = ttk.LabelFrame(container, text="Conversion Options")
@@ -316,7 +333,8 @@ class TIFFConverterGUI:
                 'verify': True,
                 'dry_run': False,
                 'variant_policy': self.variant_policy.get(),
-                'compression': self.compression_type.get()
+                'compression': self.compression_type.get(),
+                'convert_all_variants': self.convert_all_var.get()
             }
             
             if self.epson_mode.get():
