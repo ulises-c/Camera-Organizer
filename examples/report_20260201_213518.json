@@ -1,0 +1,94 @@
+{
+  "timestamp": "2026-02-01T21:35:18.643341",
+  "summary": {
+    "total_groups": 2,
+    "successful_groups": 2,
+    "total_operations": 8
+  },
+  "groups": [
+    {
+      "group": "1996_0002",
+      "success": true,
+      "ops": [
+        {
+          "source": "1996_0002_a.tif",
+          "action": "TIFF-DEFLATE",
+          "output": "1996_0002_a.ZIP.TIF",
+          "success": true,
+          "size_bytes": 0,
+          "duration": 0.0,
+          "error": ""
+        },
+        {
+          "source": "1996_0002_a.tif",
+          "action": "HEIC",
+          "output": "1996_0002_a.heic",
+          "success": true,
+          "size_bytes": 0,
+          "duration": 0.0,
+          "error": ""
+        },
+        {
+          "source": "1996_0002.tif",
+          "action": "TIFF-DEFLATE",
+          "output": "1996_0002.ZIP.TIF",
+          "success": true,
+          "size_bytes": 0,
+          "duration": 0.0,
+          "error": ""
+        }
+      ]
+    },
+    {
+      "group": "1996_0001",
+      "success": true,
+      "ops": [
+        {
+          "source": "1996_0001_a.tif",
+          "action": "TIFF-DEFLATE",
+          "output": "1996_0001_a.ZIP.TIF",
+          "success": true,
+          "size_bytes": 0,
+          "duration": 0.0,
+          "error": ""
+        },
+        {
+          "source": "1996_0001_a.tif",
+          "action": "HEIC",
+          "output": "1996_0001_a.heic",
+          "success": true,
+          "size_bytes": 0,
+          "duration": 0.0,
+          "error": ""
+        },
+        {
+          "source": "1996_0001.tif",
+          "action": "TIFF-DEFLATE",
+          "output": "1996_0001.ZIP.TIF",
+          "success": true,
+          "size_bytes": 0,
+          "duration": 0.0,
+          "error": ""
+        },
+        {
+          "source": "1996_0001_b.tif",
+          "action": "TIFF-DEFLATE",
+          "output": "1996_0001_b.ZIP.TIF",
+          "success": true,
+          "size_bytes": 0,
+          "duration": 0.0,
+          "error": ""
+        },
+        {
+          "source": "1996_0001_b.tif",
+          "action": "HEIC",
+          "output": "1996_0001_b.heic",
+          "success": true,
+          "size_bytes": 0,
+          "duration": 0.0,
+          "error": ""
+        }
+      ]
+    }
+  ]
+}

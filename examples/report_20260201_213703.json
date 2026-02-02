@@ -1,0 +1,139 @@
+{
+  "timestamp": "2026-02-01T21:37:03.727823",
+  "summary": {
+    "total_groups": 2,
+    "successful_groups": 2,
+    "total_operations": 13
+  },
+  "groups": [
+    {
+      "group": "1996_0002",
+      "success": true,
+      "ops": [
+        {
+          "source": "1996_0002_a.tif",
+          "action": "TIFF-DEFLATE",
+          "output": "1996_0002_a.ZIP.TIF",
+          "success": true,
+          "size_bytes": 11825732,
+          "duration": 0.791,
+          "error": ""
+        },
+        {
+          "source": "1996_0002_a.tif",
+          "action": "HEIC",
+          "output": "1996_0002_a.heic",
+          "success": true,
+          "size_bytes": 4279806,
+          "duration": 2.175,
+          "error": ""
+        },
+        {
+          "source": "1996_0002.tif",
+          "action": "TIFF-DEFLATE",
+          "output": "1996_0002.ZIP.TIF",
+          "success": true,
+          "size_bytes": 9568648,
+          "duration": 0.688,
+          "error": ""
+        },
+        {
+          "source": "1996_0002_a.tif",
+          "action": "MOVE_ORIGINAL",
+          "output": "originals/",
+          "success": true,
+          "size_bytes": 0,
+          "duration": 0.0,
+          "error": ""
+        },
+        {
+          "source": "1996_0002.tif",
+          "action": "MOVE_ORIGINAL",
+          "output": "originals/",
+          "success": true,
+          "size_bytes": 0,
+          "duration": 0.0,
+          "error": ""
+        }
+      ]
+    },
+    {
+      "group": "1996_0001",
+      "success": true,
+      "ops": [
+        {
+          "source": "1996_0001_a.tif",
+          "action": "TIFF-DEFLATE",
+          "output": "1996_0001_a.ZIP.TIF",
+          "success": true,
+          "size_bytes": 6431204,
+          "duration": 0.422,
+          "error": ""
+        },
+        {
+          "source": "1996_0001_a.tif",
+          "action": "HEIC",
+          "output": "1996_0001_a.heic",
+          "success": true,
+          "size_bytes": 1912556,
+          "duration": 1.23,
+          "error": ""
+        },
+        {
+          "source": "1996_0001.tif",
+          "action": "TIFF-DEFLATE",
+          "output": "1996_0001.ZIP.TIF",
+          "success": true,
+          "size_bytes": 5901028,
+          "duration": 0.444,
+          "error": ""
+        },
+        {
+          "source": "1996_0001_b.tif",
+          "action": "TIFF-DEFLATE",
+          "output": "1996_0001_b.ZIP.TIF",
+          "success": true,
+          "size_bytes": 1198256,
+          "duration": 0.219,
+          "error": ""
+        },
+        {
+          "source": "1996_0001_b.tif",
+          "action": "HEIC",
+          "output": "1996_0001_b.heic",
+          "success": true,
+          "size_bytes": 427563,
+          "duration": 0.554,
+          "error": ""
+        },
+        {
+          "source": "1996_0001_a.tif",
+          "action": "MOVE_ORIGINAL",
+          "output": "originals/",
+          "success": true,
+          "size_bytes": 0,
+          "duration": 0.0,
+          "error": ""
+        },
+        {
+          "source": "1996_0001.tif",
+          "action": "MOVE_ORIGINAL",
+          "output": "originals/",
+          "success": true,
+          "size_bytes": 0,
+          "duration": 0.0,
+          "error": ""
+        },
+        {
+          "source": "1996_0001_b.tif",
+          "action": "MOVE_ORIGINAL",
+          "output": "originals/",
+          "success": true,
+          "size_bytes": 0,
+          "duration": 0.0,
+          "error": ""
+        }
+      ]
+    }
+  ]
+}

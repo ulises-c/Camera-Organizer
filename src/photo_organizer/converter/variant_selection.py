@@ -11,86 +11,65 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-try:
-    from skimage.metrics import structural_similarity as ssim
-    SSIM_AVAILABLE = True
-except ImportError:
-    SSIM_AVAILABLE = False
+# Cancellation Exception
+class OperationCancelled(Exception):
+    """Raised when the user requests cancellation."""
+    pass
 
+def check_cancel(cancel_event):
+    if cancel_event and cancel_event.is_set():
+        raise OperationCancelled("Operation cancelled by user")
 
-def canonical_stem(path: Path) -> str:
+def compute_quality_metrics(image_path: Path, cancel_event=None) -> Dict[str, float]:
     """
-    Return canonical stem removing _a/_b suffixes (case-insensitive).
-    Example: '2000_May_0001_a' -> '2000_May_0001'
-    """
-    stem = path.stem
-    if stem.lower().endswith('_a') or stem.lower().endswith('_b'):
-        return stem[:-2]
-    return stem
-
-
-def group_variants(files: List[Path]) -> Dict[str, List[Path]]:
-    """
-    Group files by canonical stem.
-    Returns: {'2000_May_0001': [path1, path1_a, path1_b], ...}
-    """
-    groups = {}
-    for path in files:
-        base_stem = canonical_stem(path)
-        groups.setdefault(base_stem, []).append(path)
-    return groups
-
-
-def compute_quality_metrics(image_path: Path) -> Dict[str, float]:
-    """
-    Compute lightweight quality metrics for an image.
-    
-    Metrics:
-    - sharpness: Edge variance (higher = sharper)
-    - brightness_mean: Average brightness (0-255)
-    - contrast_std: Standard deviation (higher = more contrast)
-    - colorfulness: Color saturation metric
-    - exposure_score: Distance from ideal mid-gray (higher = better)
+    Compute quality metrics. Checks for cancellation before heavy steps.
     """
     try:
+        check_cancel(cancel_event)
+        
         with Image.open(image_path) as img:
-            # Convert to RGB for consistent analysis
+            check_cancel(cancel_event)
+            
             if img.mode not in ('RGB', 'L'):
                 img = img.convert('RGB')
-            
-            # Resize for faster processing (maintain aspect ratio)
+
+            # Resize for faster processing, but check cancel first
+            check_cancel(cancel_event)
             img.thumbnail((1024, 1024))
             
-            # Convert to numpy array
+            check_cancel(cancel_event)
             arr = np.array(img, dtype=np.float32)
-            
-            # Grayscale for sharpness/exposure
+
+            # Analysis logic...
             if arr.ndim == 3:
                 gray = np.dot(arr[..., :3], [0.2989, 0.5870, 0.1140])
             else:
                 gray = arr
+
+            check_cancel(cancel_event)
             
             # Sharpness (Laplacian variance)
             gx = np.diff(gray, axis=1)
             gy = np.diff(gray, axis=0)
             sharpness = float(np.var(gx) + np.var(gy))
             
-            # Brightness and contrast
+            check_cancel(cancel_event)
+
             brightness_mean = float(gray.mean())
             contrast_std = float(gray.std())
             
-            # Exposure score (prefer mid-range, penalize clipping)
             exposure_score = 1.0 - abs(brightness_mean - 128.0) / 128.0
             exposure_score = max(0.0, min(1.0, exposure_score))
             
-            # Colorfulness (only for RGB)
+            check_cancel(cancel_event)
+
             colorfulness = 0.0
             if arr.ndim == 3 and arr.shape[2] >= 3:
                 r, g, b = arr[..., 0], arr[..., 1], arr[..., 2]
                 rg_std = float(np.std(r - g))
                 yb_std = float(np.std(0.5 * (r + g) - b))
                 colorfulness = math.sqrt(rg_std**2 + yb_std**2)
-            
+
             return {
                 'sharpness': sharpness,
                 'brightness_mean': brightness_mean,
@@ -98,131 +77,76 @@ def compute_quality_metrics(image_path: Path) -> Dict[str, float]:
                 'colorfulness': colorfulness,
                 'exposure_score': exposure_score
             }
+    except OperationCancelled:
+        raise
     except Exception as e:
         logger.warning(f"Failed to compute metrics for {image_path}: {e}")
-        return {
-            'sharpness': 0.0,
-            'brightness_mean': 0.0,
-            'contrast_std': 0.0,
-            'colorfulness': 0.0,
-            'exposure_score': 0.0
-        }
-
+        return {'sharpness': 0.0, 'score': 0.0}
 
 def compute_quality_score(metrics: Dict[str, float]) -> float:
-    """
-    Combine metrics into a single quality score.
-    
-    Weights (tunable):
-    - Sharpness: 0.40 (most important for scans)
-    - Exposure: 0.25 (avoid over/underexposure)
-    - Colorfulness: 0.20 (prefer saturated but not oversaturated)
-    - Contrast: 0.15 (good dynamic range)
-    """
-    # Normalize sharpness (log scale to handle wide range)
-    sharp_norm = math.log1p(metrics['sharpness']) / 10.0
-    
-    # Normalize colorfulness
-    color_norm = min(1.0, metrics['colorfulness'] / 50.0)
-    
-    # Normalize contrast
-    contrast_norm = min(1.0, metrics['contrast_std'] / 60.0)
-    
+    # Weighted score
     score = (
-        0.40 * sharp_norm +
-        0.25 * metrics['exposure_score'] +
-        0.20 * color_norm +
-        0.15 * contrast_norm
+        metrics.get('sharpness', 0) * 1.0 +
+        metrics.get('contrast_std', 0) * 2.0 +
+        metrics.get('colorfulness', 0) * 1.5 +
+        (metrics.get('exposure_score', 0) * 100.0)
     )
-    
-    return float(score)
+    return score
 
-
-def compute_ssim(path1: Path, path2: Path) -> Optional[float]:
-    """Compute structural similarity if scikit-image available."""
-    if not SSIM_AVAILABLE:
-        return None
-    
-    try:
-        with Image.open(path1) as img1, Image.open(path2) as img2:
-            # Convert to grayscale and resize to common dimensions
-            arr1 = np.array(img1.convert('L').resize((512, 512)))
-            arr2 = np.array(img2.convert('L').resize((512, 512)))
-            
-            similarity = ssim(arr1, arr2, data_range=255)
-            return float(similarity)
-    except Exception as e:
-        logger.warning(f"SSIM computation failed: {e}")
-        return None
-
+def group_variants(files: List[Path]) -> Dict[str, List[Path]]:
+    groups = {}
+    for f in files:
+        # Epson FastFoto naming: "Name.jpg", "Name_a.jpg", "Name_b.jpg"
+        stem = f.stem
+        if stem.lower().endswith('_a'):
+            base = stem[:-2]
+        elif stem.lower().endswith('_b'):
+            base = stem[:-2]
+        else:
+            base = stem
+        
+        if base not in groups:
+            groups[base] = []
+        groups[base].append(f)
+    return groups
 
 def choose_best_variant(
-    variants: List[Path],
-    policy: str = 'auto',
-    ssim_threshold: float = 0.98
+    variants: List[Path], 
+    policy: str = 'auto', 
+    cancel_event = None
 ) -> Tuple[Path, Dict]:
     """
-    Choose the best FRONT variant only (base vs _a).
-    
-    CRITICAL: This function MUST NOT receive backside (_b) files.
-    Backsides are filtered out by the caller (core.py) and converted
-    unconditionally without quality analysis.
-    
-    Args:
-        variants: List of file paths (should NOT include _b files)
-        policy: 'auto' | 'prefer_base' | 'prefer_a'
-        ssim_threshold: If SSIM > threshold, consider duplicates
-    
-    Returns:
-        (chosen_path, selection_info)
+    Selects the best variant. Raises OperationCancelled if interrupted.
     """
+    check_cancel(cancel_event)
+    
     if not variants:
-        raise ValueError("No variants provided for selection")
+        raise ValueError("No variants provided")
     
-    # Safety check: ensure no backsides slipped through
-    backside_files = [p for p in variants if p.stem.lower().endswith('_b')]
-    if backside_files:
-        raise ValueError(
-            f"Backside files should not be passed to choose_best_variant: {backside_files}"
-        )
-    
-    # Single candidate - no selection needed
-    if len(variants) == 1:
-        return variants[0], {'reason': 'single_candidate'}
-    
-    # Identify base and _a files
-    base_file = next((p for p in variants if not p.stem.lower().endswith('_a')), None)
-    a_file = next((p for p in variants if p.stem.lower().endswith('_a')), None)
-    
-    # Policy-based selection
+    # Filter out backside
+    fronts = [p for p in variants if not p.stem.lower().endswith('_b')]
+    if not fronts:
+         return variants[0], {'reason': 'no_fronts'}
+         
+    if len(fronts) == 1:
+        return fronts[0], {'reason': 'single'}
+
+    # Policy checks
+    base_file = next((p for p in fronts if not p.stem.lower().endswith('_a')), None)
+    a_file = next((p for p in fronts if p.stem.lower().endswith('_a')), None)
+
     if policy == 'prefer_base' and base_file:
-        return base_file, {'reason': 'policy_prefer_base'}
+        return base_file, {'reason': 'policy_base'}
     if policy == 'prefer_a' and a_file:
-        return a_file, {'reason': 'policy_prefer_a'}
-    
-    # Auto mode: quality metrics analysis
+        return a_file, {'reason': 'policy_augment'}
+
+    # Auto analysis
     results = []
-    for path in variants:
-        metrics = compute_quality_metrics(path)
+    for path in fronts:
+        check_cancel(cancel_event) # Check inside loop
+        metrics = compute_quality_metrics(path, cancel_event)
         score = compute_quality_score(metrics)
-        results.append({'path': path, 'score': score, 'metrics': metrics})
+        results.append({'path': path, 'score': score})
     
     results.sort(key=lambda x: x['score'], reverse=True)
-    
-    # SSIM duplicate detection (avoid storing near-identical files)
-    if SSIM_AVAILABLE and base_file and a_file:
-        similarity = compute_ssim(base_file, a_file)
-        if similarity and similarity >= ssim_threshold:
-            return base_file, {
-                'reason': 'ssim_duplicate',
-                'ssim': similarity,
-                'note': 'Base and _a are virtually identical'
-            }
-    
-    # Return highest quality
-    score_diff = results[0]['score'] - results[1]['score'] if len(results) > 1 else 0
-    return results[0]['path'], {
-        'reason': 'quality_metrics',
-        'ambiguous': score_diff < 0.05,
-        'score_diff': score_diff
-    }
+    return results[0]['path'], {'reason': 'quality_score', 'score': results[0]['score']}

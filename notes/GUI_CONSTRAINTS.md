@@ -3,89 +3,57 @@
 **Environment:** macOS M-series (Tcl/Tk 9.0.3), Linux (various)  
 **Framework:** tkinter + ttkbootstrap
 
-## 1. Namespace Safety (CRITICAL - Prevents UnboundLocalError)
+## 1. Namespace Safety (CRITICAL)
 
-**NEVER** use wildcard imports for tkinter/ttkbootstrap constants:
+**ALWAYS** use explicit `tk.` namespace for constants (e.g., `tk.RIGHT`, `tk.X`).
 
-```python
-# ❌ WRONG - causes UnboundLocalError
-from tkinter import *
-from ttkbootstrap.constants import *
+## 2. Bootstyle Safety (CRITICAL)
 
-def _create_widgets(self):
-    widget.pack(side=RIGHT)  # UnboundLocalError!
-```
+**NEVER** pass `bootstyle` directly to container widgets like `LabelFrame`.
+**ALWAYS** use the `safe_widget_create` wrapper.
 
-**ALWAYS** use explicit `tk.` namespace:
+## 3. Padding & Dimension Constraints
 
-```python
-# ✅ CORRECT
-import tkinter as tk
-
-def _create_widgets(self):
-    widget.pack(side=tk.RIGHT, fill=tk.X, expand=tk.YES)
-```
-
-## 2. Bootstyle Safety (CRITICAL - Prevents TclError)
-
-**NEVER** pass `bootstyle` directly to container widgets like `LabelFrame`:
-
-```python
-# ❌ WRONG - causes TclError on some platforms
-frame = ttk.LabelFrame(parent, text="Title", bootstyle="danger")
-```
-
-**ALWAYS** use a safe wrapper or omit bootstyle on containers:
-
-```python
-# ✅ CORRECT - use safe wrapper
-def safe_widget_create(widget_cls, *args, bootstyle=None, **kwargs):
-    if bootstyle:
-        try:
-            return widget_cls(*args, bootstyle=bootstyle, **kwargs)
-        except (TypeError, tk.TclError):
-            return widget_cls(*args, **kwargs)
-    return widget_cls(*args, **kwargs)
-
-# Or simply omit bootstyle on LabelFrame
-frame = ttk.LabelFrame(parent, text="Title")
-```
-
-## 3. Padding Constraints
-
-**NEVER** pass `padding=` as a constructor argument to `ttk.LabelFrame`:
-
-```python
-# ❌ WRONG
-frame = ttk.LabelFrame(parent, text="Title", padding=10)
-```
-
-**ALWAYS** use inner frames for padding:
-
-```python
-# ✅ CORRECT
-frame = ttk.LabelFrame(parent, text="Title")
-inner = ttk.Frame(frame, padding=10)
-inner.pack(fill=tk.X)
-```
+- **NEVER** use `padding=` on `ttk.LabelFrame`. Use an inner `ttk.Frame`.
+- **NEVER** use `width=` on `ttk.Scale` or `ttk.Progressbar`. Use `length=` for pixel dimensions.
+- **NEVER** use `width=` on `ttk.Label`. Use `wraplength=` or layout management.
 
 ## 4. Packing Order (Visibility)
 
-To ensure bottom toolbars/buttons remain visible:
+1. Pack bottom toolbars/buttons **FIRST** with `side=tk.BOTTOM`.
+2. Pack main content **SECOND** with `fill=tk.BOTH, expand=tk.YES`.
 
-1. Pack fixed toolbars with `side=tk.BOTTOM` **FIRST**
-2. Pack expanding content containers **AFTER**
+## 5. Widget Construction Wrapper
+
+Use this robust version to handle incompatible options across platforms:
 
 ```python
-# ✅ CORRECT ORDER
-bottom_toolbar = ttk.Frame(root)
-bottom_toolbar.pack(side=tk.BOTTOM, fill=tk.X)  # FIRST
+def safe_widget_create(widget_cls, parent, **kwargs):
+    """
+    Robust widget creator handling macOS/Linux incompatibilities.
+    Automatically maps 'width' to 'length' for Scale/Progressbar.
+    """
+    # 1. Map incompatible options
+    widget_name = getattr(widget_cls, "__name__", str(widget_cls))
+    if widget_name in ('Scale', 'Progressbar') and 'width' in kwargs:
+        if 'length' not in kwargs:
+            kwargs['length'] = kwargs.pop('width')
+        else:
+            kwargs.pop('width') # Prefer explicit length if both exist
 
-main_content = ttk.Frame(root)
-main_content.pack(fill=tk.BOTH, expand=tk.YES)  # AFTER
+    # 2. Try with bootstyle
+    bootstyle = kwargs.pop('bootstyle', None)
+    try:
+        if bootstyle:
+            return widget_cls(parent, bootstyle=bootstyle, **kwargs)
+        return widget_cls(parent, **kwargs)
+    except (tk.TclError, TypeError):
+        # 3. Fallback: strip bootstyle and retry
+        # If that fails, the caller receives the error (we can't guess valid args)
+        return widget_cls(parent, **kwargs)
 ```
 
-## 5. Toggle Consistency
+## 6. Toggle Consistency
 
 Use uniform `bootstyle` variants for all toggles:
 
@@ -93,7 +61,7 @@ Use uniform `bootstyle` variants for all toggles:
 - `"warning-round-toggle"` for caution options
 - `"danger-round-toggle"` for safety-critical options (dry run)
 
-## 6. Dry Run Mode Requirements
+## 7. Dry Run Mode Requirements
 
 - Default to dry-run mode (enabled on startup)
 - Log dry-run status on init and when toggled
@@ -101,7 +69,7 @@ Use uniform `bootstyle` variants for all toggles:
 - Require confirmation dialog when disabling dry-run
 - Update button text and colors dynamically based on mode
 
-## 7. Testing Checklist
+## 8. Testing Checklist
 
 Before committing GUI changes, verify:
 
@@ -112,11 +80,11 @@ Before committing GUI changes, verify:
 - [ ] Toggles have uniform appearance
 - [ ] Works on macOS (Tcl/Tk 9.0+) and Linux (Tcl/Tk 8.6+)
 
-## 8. Quick Reference
+## 9. Quick Reference
 
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| UnboundLocalError | Wildcard imports | Use `tk.RIGHT` not `RIGHT` |
-| TclError bootstyle | Direct pass to container | Use safe_widget_create helper |
-| Hidden buttons | Wrong pack order | Pack toolbar FIRST with side=tk.BOTTOM |
-| Padding crash | padding= on LabelFrame | Use inner Frame with padding |
+| Issue              | Cause                    | Solution                               |
+| ------------------ | ------------------------ | -------------------------------------- |
+| UnboundLocalError  | Wildcard imports         | Use `tk.RIGHT` not `RIGHT`             |
+| TclError bootstyle | Direct pass to container | Use safe_widget_create helper          |
+| Hidden buttons     | Wrong pack order         | Pack toolbar FIRST with side=tk.BOTTOM |
+| Padding crash      | padding= on LabelFrame   | Use inner Frame with padding           |

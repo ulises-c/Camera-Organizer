@@ -5,16 +5,14 @@ import sys
 import subprocess
 import logging
 from pathlib import Path
+import threading
+import tkinter as tk
+from tkinter import messagebox
 
-try:
-    import tkinter as tk
-    from tkinter import ttk, messagebox
-except ImportError:
-    print("Error: tkinter is required but not installed.")
-    print("On macOS with pyenv, run: make install-python-macos")
-    sys.exit(1)
-
-logger = logging.getLogger(__name__)
+# Configure logging for backend console visibility
+logger = logging.getLogger("photo_organizer.launcher")
+logging.basicConfig(level=logging.INFO, stream=sys.stderr,
+                    format='%(message)s')
 
 TOOLS = [
     {
@@ -46,129 +44,118 @@ class LauncherApp:
         self.root.title("Photo Organizer Suite")
         self.root.geometry("600x520")
         self.center_window()
+        self.processes = {}  # map module -> {proc, btn}
         self.create_widgets()
 
     def center_window(self):
-        """Center the window on screen."""
         self.root.update_idletasks()
-        width = self.root.winfo_width()
-        height = self.root.winfo_height()
-        x = (self.root.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.root.winfo_screenheight() // 2) - (height // 2)
-        self.root.geometry(f'{width}x{height}+{x}+{y}')
+        w, h = self.root.winfo_width(), self.root.winfo_height()
+        x = (self.root.winfo_screenwidth() // 2) - (w // 2)
+        y = (self.root.winfo_screenheight() // 2) - (h // 2)
+        self.root.geometry(f'{w}x{h}+{x}+{y}')
 
     def create_widgets(self):
-        # Header
         header = tk.Frame(self.root, pady=20)
         header.pack(fill=tk.X)
+        tk.Label(header, text="📦 Photo Organizer Suite", font=(
+            "Helvetica", 24, "bold")).pack(pady=(0, 5))
+        tk.Label(header, text="Comprehensive tools for organizing photos and scans", font=(
+            "Helvetica", 10), fg="gray").pack()
 
-        tk.Label(
-            header,
-            text="📦 Photo Organizer Suite",
-            font=("Helvetica", 24, "bold")
-        ).pack(pady=(0, 5))
-
-        tk.Label(
-            header,
-            text="Comprehensive tools for organizing photos and scans",
-            font=("Helvetica", 10),
-            fg="gray"
-        ).pack()
-
-        # Tools container
         container = tk.Frame(self.root, padx=20, pady=20)
         container.pack(fill=tk.BOTH, expand=True)
 
         for tool in TOOLS:
             self.create_tool_button(container, tool)
 
-        # Status bar
         self.status_var = tk.StringVar(value="Ready")
-        status = tk.Label(
-            self.root,
-            textvariable=self.status_var,
-            fg="gray",
-            bd=1,
-            relief=tk.SUNKEN,
-            anchor=tk.W,
-            padx=10,
-            pady=5
-        )
-        status.pack(side=tk.BOTTOM, fill=tk.X)
+        tk.Label(self.root, textvariable=self.status_var, fg="gray", bd=1,
+                 relief=tk.SUNKEN, anchor=tk.W, padx=10, pady=5).pack(side=tk.BOTTOM, fill=tk.X)
 
     def create_tool_button(self, parent, tool):
-        frame = tk.Frame(parent, pady=10)
-        frame.pack(fill=tk.X)
+        f = tk.Frame(parent, pady=10)
+        f.pack(fill=tk.X)
 
-        # Left side: labels
-        label_frame = tk.Frame(frame)
-        label_frame.pack(fill=tk.X, side=tk.LEFT, expand=True)
-        
-        tk.Label(
-            label_frame,
-            text=tool["name"],
-            font=("Helvetica", 12, "bold"),
-            anchor=tk.W
-        ).pack(anchor=tk.W)
-        
-        tk.Label(
-            label_frame,
-            text=tool["desc"],
-            font=("Helvetica", 9),
-            fg="gray",
-            anchor=tk.W
-        ).pack(anchor=tk.W, pady=(2, 0))
+        lf = tk.Frame(f)
+        lf.pack(fill=tk.X, side=tk.LEFT, expand=True)
+        tk.Label(lf, text=tool["name"], font=(
+            "Helvetica", 12, "bold"), anchor=tk.W).pack(anchor=tk.W)
+        tk.Label(lf, text=tool["desc"], font=(
+            "Helvetica", 9), fg="gray", anchor=tk.W).pack(anchor=tk.W)
 
-        # Right side: button
-        btn = tk.Button(
-            frame,
-            text="Launch",
-            width=12,
-            command=lambda m=tool["module"]: self.launch_tool(m)
-        )
+        btn = tk.Button(f, text="Launch", width=12)
+        btn.config(command=lambda m=tool["module"],
+                   b=btn: self.launch_tool(m, b))
         btn.pack(side=tk.RIGHT)
 
-    def launch_tool(self, module_name: str):
-        """Launch tool as separate process with explicit environment preservation."""
-        try:
-            # 1. Copy current environment to preserve virtualenv context
-            env = os.environ.copy()
-            
-            # 2. Add project src directory to PYTHONPATH for -m execution
-            project_root = str(Path(__file__).parent.parent)
-            existing_pythonpath = env.get("PYTHONPATH", "")
-            env["PYTHONPATH"] = (
-                f"{project_root}{os.pathsep}{existing_pythonpath}" 
-                if existing_pythonpath 
-                else project_root
-            )
-            
-            # 3. Launch subprocess with explicit environment
-            process = subprocess.Popen(
-                [sys.executable, "-m", module_name],
-                env=env,
-                cwd=os.getcwd(),
-                start_new_session=True
-            )
-            
-            tool_name = module_name.split('.')[-1]
-            self.status_var.set(f"✅ Launched: {tool_name}")
-            logger.info(f"Launched {module_name} (PID: {process.pid})")
-            
-        except Exception as e:
-            error_msg = f"Error launching {module_name}: {e}"
-            self.status_var.set(f"❌ {error_msg}")
-            logger.error(error_msg, exc_info=True)
-            messagebox.showerror("Launch Failed", error_msg)
+    def launch_tool(self, module_name, btn):
+        # 1. Check existing
+        if module_name in self.processes:
+            p = self.processes[module_name]['proc']
+            if p.poll() is None:
+                messagebox.showwarning(
+                    "Running", f"{module_name} is already running.")
+                return
+            else:
+                del self.processes[module_name]
 
-    def run(self):
-        self.root.mainloop()
+        try:
+            # 2. Prepare Environment
+            env = os.environ.copy()
+            root_dir = str(Path(__file__).parent.parent)
+            env["PYTHONPATH"] = f"{root_dir}{os.pathsep}{env.get('PYTHONPATH', '')}"
+
+            # 3. Launch with stdout capture
+            proc = subprocess.Popen(
+                [sys.executable, "-m", module_name],
+                env=env, cwd=os.getcwd(),
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                bufsize=1, universal_newlines=True
+            )
+
+            # 4. Update UI
+            btn.config(state=tk.DISABLED)
+            self.processes[module_name] = {'proc': proc, 'btn': btn}
+            self.status_var.set(f"Launched: {module_name.split('.')[-1]}")
+            logger.info(f"🚀 Launched {module_name} (PID {proc.pid})")
+
+            # 5. Monitor threads
+            threading.Thread(target=self._stream_output, args=(
+                proc, module_name), daemon=True).start()
+            threading.Thread(target=self._watch_exit, args=(
+                module_name, btn, proc), daemon=True).start()
+
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def _stream_output(self, proc, name):
+        """Streams child process output to the main console."""
+        with proc.stdout:
+            for line in iter(proc.stdout.readline, ''):
+                sys.stderr.write(f"[{name}] {line}")
+                sys.stderr.flush()
+
+    def _watch_exit(self, name, btn, proc):
+        """Enables the button when process exits."""
+        rc = proc.wait()
+        logger.info(f"🏁 {name} exited with code {rc}")
+
+        def _reset():
+            if name in self.processes:
+                del self.processes[name]
+            try:
+                btn.config(state=tk.NORMAL)
+            except:
+                pass
+            self.status_var.set(f"Exited: {name.split('.')[-1]}")
+
+        self.root.after(0, _reset)
 
 
 def main():
     app = LauncherApp()
-    app.run()
+    app.root.mainloop()
 
 
 if __name__ == "__main__":
-    main()
+    LauncherApp().root.mainloop()
