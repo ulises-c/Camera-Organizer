@@ -29,6 +29,20 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+# Test HEIF save capability at module load
+HEIF_SAVE_AVAILABLE = False
+try:
+    test_img = Image.new('RGB', (2, 2), color=(255, 0, 0))
+    import tempfile
+    tf = Path(tempfile.gettempdir()) / "photo_organizer_heif_test.heic"
+    test_img.save(tf, format="HEIF", quality=90)
+    if tf.exists():
+        HEIF_SAVE_AVAILABLE = True
+        tf.unlink(missing_ok=True)
+except Exception:
+    HEIF_SAVE_AVAILABLE = False
+
+
 @dataclass
 class ConversionResult:
     """Result of a single file conversion operation."""
@@ -43,6 +57,154 @@ class ConversionResult:
     error_message: str = ""
     warnings: List[str] = field(default_factory=list)
     duration_seconds: float = 0.0
+
+
+def _init_worker():
+    """Initialize worker process - critical for macOS 'spawn' method."""
+    try:
+        import pillow_heif
+        pillow_heif.register_heif_opener()
+    except Exception:
+        pass
+
+
+def create_heic_copy(
+    source_path: Path,
+    output_path: Path,
+    quality: int = -1,
+    verify: bool = True,
+    dry_run: bool = False
+) -> ConversionResult:
+    """Create an HEIC copy of a TIFF file with robust error handling."""
+    start_time = time.time()
+
+    result = ConversionResult(
+        source_path=str(source_path),
+        output_path=str(output_path),
+        conversion_type="HEIC",
+        success=False,
+        source_size_bytes=source_path.stat().st_size
+    )
+
+    if dry_run:
+        result.success = True
+        result.output_size_bytes = 0
+        result.warnings.append("DRY RUN - no files written")
+        result.duration_seconds = time.time() - start_time
+        logger.info(f"DRY RUN: simulated HEIC for {source_path.name}")
+        return result
+
+    if not HEIF_SAVE_AVAILABLE:
+        result.error_message = "HEIF/HEIC saving not available (libheif/pillow-heif missing or broken)"
+        result.success = False
+        logger.error(f"HEIC conversion failed for {source_path.name}: {result.error_message}")
+        result.duration_seconds = time.time() - start_time
+        return result
+
+    try:
+        with Image.open(source_path) as img:
+            # Check bit depth and preserve metadata BEFORE conversion
+            bit_depth = get_bit_depth(img)
+            exif = img.info.get("exif")
+            icc_profile = img.info.get("icc_profile")
+
+            if bit_depth > 8:
+                result.warnings.append(
+                    f"High bit depth ({bit_depth}-bit) converted to 8-bit for HEIC. "
+                    "Potential quality/precision loss may occur."
+                )
+
+            # Aggressive mode normalization for HEIC compatibility
+            if img.mode in ("RGBA", "LA"):
+                img = img.convert("RGB")
+            elif img.mode == "P":
+                img = img.convert("RGB")
+            
+            # Handle 16-bit/Float images - convert to 8-bit
+            if img.mode in ("I", "I;16", "I;16L", "I;16B", "I;16N", "F"):
+                import numpy as np
+                arr = np.array(img)
+                if arr.dtype in (np.float32, np.float64):
+                    arr = np.clip(arr * 255, 0, 255).astype(np.uint8)
+                else:
+                    arr = (arr >> 8).astype(np.uint8) if arr.max() > 255 else arr.astype(np.uint8)
+                img = Image.fromarray(arr)
+            
+            # Final safety check
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+
+            # Save with multiple fallback attempts
+            save_kwargs = {}
+            if quality == -1:
+                save_kwargs["quality"] = -1
+            else:
+                save_kwargs["quality"] = quality
+
+            if exif:
+                save_kwargs["exif"] = exif
+            if icc_profile:
+                save_kwargs["icc_profile"] = icc_profile
+
+            saved = False
+            save_errors = []
+
+            # Try multiple format specifications
+            for fmt in ("HEIF", None):
+                try:
+                    if fmt:
+                        img.save(output_path, format=fmt, **save_kwargs)
+                    else:
+                        img.save(output_path, **save_kwargs)
+                    saved = True
+                    break
+                except Exception as e:
+                    save_errors.append((fmt or "auto", str(e)))
+                    # Fallback: if lossless (-1) failed, try high quality
+                    if quality == -1 and not saved:
+                        try:
+                            fallback_kwargs = save_kwargs.copy()
+                            fallback_kwargs["quality"] = 95
+                            if fmt:
+                                img.save(output_path, format=fmt, **fallback_kwargs)
+                            else:
+                                img.save(output_path, **fallback_kwargs)
+                            result.warnings.append("Lossless HEIF failed, using quality=95")
+                            saved = True
+                            break
+                        except Exception:
+                            continue
+
+            if not saved:
+                err_msg = " | ".join(f"{fmt}:{err}" for fmt, err in save_errors)
+                raise RuntimeError(f"All HEIC save attempts failed: {err_msg}")
+
+            # Verify file was actually created
+            if not output_path.exists() or output_path.stat().st_size == 0:
+                raise RuntimeError("HEIC file created but is empty or missing")
+
+        result.output_size_bytes = output_path.stat().st_size
+        result.compression_ratio = result.source_size_bytes / \
+            result.output_size_bytes if result.output_size_bytes > 0 else 0
+        result.success = True
+
+        # Verify if requested
+        if verify:
+            try:
+                with Image.open(output_path) as verify_img:
+                    verify_img.verify()
+                result.verified = True
+            except Exception as e:
+                result.warnings.append(f"Verification warning: {str(e)}")
+                result.verified = False
+
+    except Exception as e:
+        result.error_message = str(e)
+        result.success = False
+        logger.exception(f"HEIC conversion failed for {source_path.name}: {e}")
+
+    result.duration_seconds = time.time() - start_time
+    return result
 
 
 def create_lzw_copy(
@@ -125,119 +287,24 @@ def create_lzw_copy(
     return result
 
 
-def create_heic_copy(
-    source_path: Path,
-    output_path: Path,
-    quality: int = -1,  # -1 means lossless
-    verify: bool = True,
-    dry_run: bool = False
-) -> ConversionResult:
-    """Create an HEIC copy of a TIFF file."""
-    start_time = time.time()
-
-    result = ConversionResult(
-        source_path=str(source_path),
-        output_path=str(output_path),
-        conversion_type="HEIC",
-        success=False,
-        source_size_bytes=source_path.stat().st_size
-    )
-
-    if dry_run:
-        result.success = True
-        result.output_size_bytes = 0
-        result.warnings.append("DRY RUN - no files written")
-        result.duration_seconds = time.time() - start_time
-        logger.info(f"DRY RUN: simulated HEIC for {source_path.name}")
-        return result
-
-    try:
-        with Image.open(source_path) as img:
-            # Check bit depth and add warning if high
-            bit_depth = get_bit_depth(img)
-            if bit_depth > 8:
-                result.warnings.append(
-                    f"High bit depth ({bit_depth}-bit) converted to HEIC. "
-                    "Potential quality/precision loss may occur."
-                )
-
-            # Convert to RGB if necessary (HEIC doesn't support all modes)
-            if img.mode in ("RGBA", "LA"):
-                # Keep alpha if present
-                pass
-            elif img.mode not in ("RGB", "L"):
-                img = img.convert("RGB")
-
-            # Handle 16-bit images - convert to 8-bit for HEIC
-            if img.mode in ("I", "I;16", "I;16L", "I;16B", "I;16N", "F"):
-                import numpy as np
-                arr = np.array(img)
-                if arr.dtype == np.float32 or arr.dtype == np.float64:
-                    # Normalize float images
-                    arr = ((arr - arr.min()) / (arr.max() - arr.min())
-                           * 255).astype(np.uint8)
-                elif arr.dtype == np.uint16 or arr.dtype == np.int32:
-                    # Scale 16-bit to 8-bit
-                    arr = (arr / 256).astype(np.uint8)
-                else:
-                    arr = arr.astype(np.uint8)
-                img = Image.fromarray(arr)
-
-            # Get EXIF data
-            exif = img.info.get("exif")
-
-            # Save as HEIC
-            save_kwargs = {}
-            if quality == -1:
-                save_kwargs["quality"] = -1  # Lossless
-            else:
-                save_kwargs["quality"] = quality
-
-            if exif:
-                save_kwargs["exif"] = exif
-
-            img.save(output_path, format="HEIF", **save_kwargs)
-
-        result.output_size_bytes = output_path.stat().st_size
-        result.compression_ratio = result.source_size_bytes / \
-            result.output_size_bytes if result.output_size_bytes > 0 else 0
-        result.success = True
-
-        # Verify if requested
-        if verify:
-            try:
-                with Image.open(output_path) as verify_img:
-                    verify_img.verify()
-                result.verified = True
-            except Exception as e:
-                result.warnings.append(f"Verification warning: {str(e)}")
-                result.verified = False
-
-    except Exception as e:
-        result.error_message = str(e)
-        result.success = False
-
-    result.duration_seconds = time.time() - start_time
-    return result
 
 
 def process_single_file(file_path: Path, options: dict) -> List[ConversionResult]:
     """Process a single file with configured options."""
     results = []
-    
     output_dir = options.get("output_dir", file_path.parent)
     compression = options.get("compression", "lzw")
+    dry_run = options.get("dry_run", False)
+    verify = options.get("verify", True)
     
-    # LZW conversion
     if options.get("create_lzw", True):
-        lzw_output = output_dir / f"{file_path.stem}_lzw.tif"
-        results.append(create_lzw_copy(file_path, lzw_output, compression=compression))
+        lzw_output = output_dir / f"{file_path.stem}.LZW.tif"
+        results.append(create_lzw_copy(file_path, lzw_output, verify=verify, dry_run=dry_run, compression=compression))
     
-    # HEIC conversion
     if options.get("create_heic", False):
         heic_output = output_dir / f"{file_path.stem}.heic"
         quality = options.get("heic_quality", 90)
-        results.append(create_heic_copy(file_path, heic_output, quality))
+        results.append(create_heic_copy(file_path, heic_output, quality=quality, verify=verify, dry_run=dry_run))
     
     return results
 
@@ -286,11 +353,8 @@ def batch_process(
         return results
 
     # Parallel processing for production runs
-    with ProcessPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(process_single_file, f, options): f 
-            for f in files
-        }
+    with ProcessPoolExecutor(max_workers=workers, initializer=_init_worker) as executor:
+        futures = {executor.submit(process_single_file, f, options): f for f in files}
         
         for future in as_completed(futures):
             # Check for cancellation
@@ -387,8 +451,7 @@ def process_epson_folder(
         backside_files = [p for p in variants if p.stem.lower().endswith('_b')]
         front_candidates = [p for p in variants if not p.stem.lower().endswith('_b')]
         
-        logger.info(f"[{idx}/{total}] Group {stem}: "
-                   f"{len(front_candidates)} front(s), {len(backside_files)} backside(s)")
+        logger.info(f"[{idx}/{total}] Group {stem}: Processing variants")
         
         # Build conversion queue
         to_convert = []  # List of (Path, reason_string)
@@ -396,18 +459,14 @@ def process_epson_folder(
         # Handle front candidates
         if convert_all:
             for f in front_candidates:
-                to_convert.append((f, "convert_all_mode"))
+                to_convert.append((f, "convert_all"))
         elif front_candidates:
-            chosen, info = choose_best_variant(
-                front_candidates,
-                policy=policy,
-                ssim_threshold=options.get('ssim_threshold', 0.98)
-            )
+            chosen, info = choose_best_variant(front_candidates, policy=policy)
             to_convert.append((chosen, info.get('reason', 'selected')))
         
         # ALWAYS add all backside files (mandatory conversion)
         for b in backside_files:
-            to_convert.append((b, "backside_auto_include"))
+            to_convert.append((b, "backside_auto"))
         
         # Track per-file conversion success for safe archiving
         success_tracker = {}
@@ -425,7 +484,7 @@ def process_epson_folder(
                     dry_run=dry_run,
                     compression=compression
                 )
-                res.warnings.append(f"Selection reason: {reason}")
+                res.warnings.append(f"Reason: {reason}")
                 file_results.append(res)
                 results.append(res)
             
@@ -438,18 +497,27 @@ def process_epson_folder(
                     verify=verify,
                     dry_run=dry_run
                 )
-                res.warnings.append(f"Selection reason: {reason}")
+                res.warnings.append(f"Reason: {reason}")
                 file_results.append(res)
                 results.append(res)
             
-            success_tracker[source_path] = all(r.success for r in file_results) if file_results else False
+            # Determine success for archiving:
+            # If LZW was requested, require LZW success
+            # Otherwise, require HEIC success
+            primary_success = False
+            if create_lzw:
+                primary_success = any(r.success and r.conversion_type.startswith("TIFF") for r in file_results)
+            elif create_heic:
+                primary_success = any(r.success and r.conversion_type == "HEIC" for r in file_results)
+            
+            success_tracker[source_path] = primary_success
         
         # Archive originals (only if conversions succeeded and not dry-run)
         if not dry_run:
             for variant in variants:
-                # Only move if this file was successfully converted
-                if variant in success_tracker and not success_tracker[variant]:
-                    logger.error(f"Skipping archive for {variant.name} - conversion failed")
+                # FIXED LOGIC: Only move files that were successfully converted
+                if not success_tracker.get(variant, False):
+                    logger.error(f"Skipping archive for {variant.name} - conversion not successful or not attempted")
                     continue
                 
                 # Determine destination (case-insensitive backside detection)
@@ -488,7 +556,7 @@ def save_report(results: List[ConversionResult], output_path: Path):
     """Save processing report as JSON."""
     report_data = {
         "timestamp": datetime.now().isoformat(),
-        "total_files": len(results),
+        "total_operations": len(results),
         "successful": sum(1 for r in results if r.success),
         "failed": sum(1 for r in results if not r.success),
         "results": [asdict(r) for r in results]
@@ -496,5 +564,3 @@ def save_report(results: List[ConversionResult], output_path: Path):
     
     with open(output_path, 'w') as f:
         json.dump(report_data, f, indent=2)
-    
-    logger.info(f"Report saved to {output_path}")

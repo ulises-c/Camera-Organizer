@@ -48,7 +48,12 @@ except Exception as e:
     _IMPORT_ERROR = e
     logger.error(f"Failed to load GUI framework: {e}")
 
-from photo_organizer.converter.core import batch_process, process_epson_folder
+from photo_organizer.converter.core import (
+    batch_process, 
+    process_epson_folder, 
+    save_report,
+    HEIF_SAVE_AVAILABLE
+)
 from photo_organizer.shared.file_utils import format_size
 
 
@@ -146,6 +151,10 @@ class TIFFConverterGUI:
         
         self._update_dry_run_ui()
         self._log_dry_run_status()
+        
+        # Warn about HEIC availability
+        if not HEIF_SAVE_AVAILABLE:
+            self.log("⚠️ HEIC output not available on this system. Install pillow-heif and libheif to enable.")
 
     def _create_widgets(self):
         """Build UI with inner-frame padding strategy and safe packing order."""
@@ -285,14 +294,19 @@ class TIFFConverterGUI:
         heic_frame = ttk.Frame(opt_inner)
         heic_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=tk.YES)
         
-        self.create_heic = tk.BooleanVar(value=True)
-        safe_widget_create(
+        self.create_heic = tk.BooleanVar(value=HEIF_SAVE_AVAILABLE)
+        heic_check = safe_widget_create(
             ttk.Checkbutton,
             heic_frame,
             text="Create HEIC",
             variable=self.create_heic,
             bootstyle="success-round-toggle"
-        ).pack(anchor=tk.W)
+        )
+        heic_check.pack(anchor=tk.W)
+        
+        # Disable HEIC if not available
+        if not HEIF_SAVE_AVAILABLE:
+            heic_check.config(state=tk.DISABLED)
         
         quality_frame = ttk.Frame(heic_frame)
         quality_frame.pack(anchor=tk.W, padx=25, pady=5)
@@ -439,11 +453,10 @@ class TIFFConverterGUI:
         self.cancel_btn.config(state=tk.NORMAL)
         self.cancel_event.clear()
         
-        try:
-            self.log_area.delete("1.0", tk.END)
-        except Exception:
-            pass
-        
+        # Add session separator (preserve history)
+        self.log("\n" + "━" * 60)
+        self.log(f"🚀 STARTING SESSION: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        self.log("━" * 60)
         self._log_dry_run_status()
         
         # Start worker and track it
@@ -484,6 +497,7 @@ class TIFFConverterGUI:
     def _run_conversion(self):
         """Execute conversion in background thread with robust error handling."""
         results = []
+        start_time = datetime.now()
         try:
             options = {
                 'create_lzw': self.create_lzw.get(),
@@ -515,16 +529,103 @@ class TIFFConverterGUI:
             if self.cancel_event.is_set():
                 self.log("⚠️ Conversion cancelled by user")
             else:
-                success_count = sum(1 for r in results if r.success)
-                total_count = len(results)
-                self.root.after(0, lambda: self.log(f"\n✅ Conversion Complete: {success_count}/{total_count} processed successfully"))
-            
+                self._present_report(results, start_time)
+                
         except Exception as e:
             logger.exception("Conversion failed")
-            self.root.after(0, lambda: self.log(f"\n❌ Error: {e}"))
+            self.root.after(0, lambda: self.log(f"\n❌ Critical Error: {e}"))
         finally:
             # CRITICAL: Use after(0) instead of after_idle for macOS Tcl/Tk 9.0+
             self.root.after(0, self._finish_conversion)
+
+    def _present_report(self, results, start_time):
+        """Generate and display comprehensive conversion report."""
+        if not results:
+            self.log("No results to report.")
+            return
+
+        # Calculate statistics
+        total_count = len(results)
+        success_count = sum(1 for r in results if r.success)
+        fail_count = total_count - success_count
+        
+        total_input_size = sum(r.source_size_bytes for r in results)
+        total_output_size = sum(r.output_size_bytes for r in results if r.success)
+        space_saved = total_input_size - total_output_size
+        savings_pct = (space_saved / total_input_size * 100) if total_input_size > 0 else 0
+        
+        duration = (datetime.now() - start_time).total_seconds()
+        
+        # Save JSON report
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            report_path = self.source_dir / f"conversion_report_{timestamp}.json"
+            save_report(results, report_path)
+            report_saved = True
+        except Exception as e:
+            logger.error(f"Failed to save report: {e}")
+            report_saved = False
+        
+        # Build human-readable summary
+        summary = [
+            "\n" + "═" * 60,
+            "📊 CONVERSION SUMMARY",
+            "═" * 60,
+            f"  Status:         {'✅ COMPLETE' if fail_count == 0 else '⚠️ COMPLETED WITH ERRORS'}",
+            f"  Total Files:    {total_count}",
+            f"  Successful:     {success_count}",
+            f"  Failed:         {fail_count}",
+            f"  Duration:       {duration:.1f} seconds",
+        ]
+        
+        if not self.dry_run_var.get() and success_count > 0:
+            summary.extend([
+                f"  Input Size:     {format_size(total_input_size)}",
+                f"  Output Size:    {format_size(total_output_size)}",
+                f"  Space Saved:    {format_size(space_saved)} ({savings_pct:.1f}%)",
+            ])
+        
+        if report_saved:
+            summary.append(f"  Report Saved:   {report_path.name}")
+        
+        summary.append("═" * 60)
+        
+        # Show failures with details
+        if fail_count > 0:
+            failures = [r for r in results if not r.success]
+            summary.append(f"\n❌ FAILURES ({fail_count}):")
+            for r in failures[:10]:
+                summary.append(f"  • {Path(r.source_path).name}: {r.error_message or 'Unknown error'}")
+            if len(failures) > 10:
+                summary.append(f"  ... and {len(failures) - 10} more (see report file)")
+        
+        # Show warnings
+        all_warnings = [w for r in results for w in r.warnings]
+        if all_warnings:
+            unique_warnings = list(set(all_warnings))[:5]
+            summary.append(f"\n⚠️ WARNINGS ({len(all_warnings)} total):")
+            for w in unique_warnings:
+                summary.append(f"  • {w}")
+        
+        summary.extend([
+            "\n" + "═" * 60,
+            "✅ Conversion Complete",
+            "Select a new folder to continue converting.",
+            "═" * 60 + "\n"
+        ])
+        
+        # Log all summary lines
+        for line in summary:
+            self.log(line)
+        
+        # Show warning dialog if there were failures
+        if fail_count > 0:
+            self.root.after(0, lambda: messagebox.showwarning(
+                "Conversion Issues",
+                f"{fail_count} operations failed.\n\n"
+                f"Check the log and report file for details.\n"
+                f"Failed files remain in the source folder."
+            ))
 
     def _finish_conversion(self):
         """Reset UI state after conversion. Must run on main thread."""
@@ -532,10 +633,9 @@ class TIFFConverterGUI:
         self.start_btn.config(state=tk.NORMAL)
         self.cancel_btn.config(state=tk.DISABLED)
         self.progress_var.set(0)
-        self.status_var.set("Ready")
+        self.status_var.set("Ready - Select a folder to begin")
         self.worker_thread = None
-        self.cancel_event = Event()  # Fresh event for next run
-        self.log("🏁 System Ready.")
+        self.cancel_event = Event()
 
     def _on_close(self):
         """Cleanup on window close."""
