@@ -248,6 +248,9 @@ def batch_process(
     """
     Parallel batch processing with worker pool.
     
+    For dry runs or single-worker scenarios, processes sequentially to avoid
+    macOS spawn-related GUI hangs.
+    
     Args:
         files: List of TIFF files to process
         options: Processing options dict
@@ -260,7 +263,21 @@ def batch_process(
     workers = options.get("workers", 4)
     total = len(files)
     completed = 0
-    
+
+    # Sequential processing for dry-run to avoid ProcessPoolExecutor issues on macOS
+    if options.get("dry_run", False) or workers == 1:
+        for f in files:
+            try:
+                file_results = process_single_file(f, options)
+                results.extend(file_results)
+                completed += 1
+                if progress_callback:
+                    progress_callback(completed, total)
+            except Exception as e:
+                logger.error(f"Processing error for {f}: {e}")
+        return results
+
+    # Parallel processing for production runs
     with ProcessPoolExecutor(max_workers=workers) as executor:
         futures = {
             executor.submit(process_single_file, f, options): f 

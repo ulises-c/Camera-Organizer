@@ -21,8 +21,6 @@ _IMPORT_ERROR = None
 
 try:
     import ttkbootstrap as ttk
-    # CRITICAL: Do NOT use wildcard imports to avoid namespace collisions
-    # from ttkbootstrap.constants import *  # NEVER DO THIS
     
     # Locate ScrolledText widget
     ScrolledText = None
@@ -82,20 +80,13 @@ def _check_dependencies():
 
 
 def safe_widget_create(widget_cls, *args, bootstyle=None, **kwargs):
-    """
-    Safely create a ttkbootstrap widget with bootstyle support.
-    
-    Falls back to creation without bootstyle if the widget or underlying
-    Tcl/Tk doesn't support it. This prevents TclError on some platforms.
-    """
+    """Safely create a ttkbootstrap widget with bootstyle support."""
     if bootstyle:
         try:
             return widget_cls(*args, bootstyle=bootstyle, **kwargs)
         except (TypeError, tk.TclError):
-            # Widget doesn't support bootstyle - retry without it
             return widget_cls(*args, **kwargs)
-    else:
-        return widget_cls(*args, **kwargs)
+    return widget_cls(*args, **kwargs)
 
 
 class TIFFConverterGUI:
@@ -120,19 +111,10 @@ class TIFFConverterGUI:
         bottom_toolbar = ttk.Frame(self.root)
         bottom_toolbar.pack(side=tk.BOTTOM, fill=tk.X)
         
-        # Visual separator
         ttk.Separator(bottom_toolbar, orient="horizontal").pack(fill=tk.X)
         
         toolbar_inner = ttk.Frame(bottom_toolbar, padding=15)
         toolbar_inner.pack(fill=tk.X)
-        
-        safe_widget_create(
-            ttk.Button,
-            toolbar_inner,
-            text="📁 Select Folder",
-            command=self.browse_directory,
-            bootstyle="secondary"
-        ).pack(side=tk.LEFT)
         
         self.start_btn = safe_widget_create(
             ttk.Button,
@@ -140,7 +122,7 @@ class TIFFConverterGUI:
             text="🚀 START CONVERSION",
             command=self.start_conversion,
             bootstyle="warning",
-            width=35
+            width=40
         )
         self.start_btn.pack(side=tk.RIGHT)
         
@@ -148,7 +130,6 @@ class TIFFConverterGUI:
         container = ttk.Frame(self.root)
         container.pack(fill=tk.BOTH, expand=tk.YES, padx=20, pady=20)
         
-        # Safety Banner
         self.safety_banner = safe_widget_create(
             ttk.Label,
             container,
@@ -226,7 +207,6 @@ class TIFFConverterGUI:
         opt_inner = ttk.Frame(opt_frame, padding=10)
         opt_inner.pack(fill=tk.X)
         
-        # LZW Column
         lzw_frame = ttk.Frame(opt_inner)
         lzw_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=tk.YES)
         
@@ -247,7 +227,6 @@ class TIFFConverterGUI:
         ttk.Radiobutton(comp_frame, text="LZW", variable=self.compression_type, value="lzw").pack(side=tk.LEFT, padx=5)
         ttk.Radiobutton(comp_frame, text="DEFLATE", variable=self.compression_type, value="deflate").pack(side=tk.LEFT)
         
-        # HEIC Column
         heic_frame = ttk.Frame(opt_inner)
         heic_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=tk.YES)
         
@@ -278,7 +257,6 @@ class TIFFConverterGUI:
         self.quality_var.trace_add("write", lambda *a: self.quality_label.config(text=str(self.quality_var.get())))
         
         # === Execution Safety ===
-        # CRITICAL: Do NOT pass bootstyle to LabelFrame - use safe_widget_create or omit
         dry_frame = ttk.LabelFrame(container, text="⚠️ Execution Safety")
         dry_frame.pack(fill=tk.X, pady=10)
         
@@ -309,20 +287,19 @@ class TIFFConverterGUI:
         self.status_var = tk.StringVar(value="Ready")
         ttk.Label(container, textvariable=self.status_var, font=("Helvetica", 9)).pack(anchor=tk.W)
         
-        # Log Area with robust fallback
         try:
             self.log_area = ScrolledText(container, height=12, autohide=True)
-        except TypeError:
-            self.log_area = ScrolledText(container, height=12)
-        except Exception:
-            # Final fallback using plain tk.Text
-            log_wrapper = ttk.Frame(container)
-            log_wrapper.pack(fill=tk.BOTH, expand=tk.YES)
-            self.log_area = tk.Text(log_wrapper, height=12, wrap="word")
-            scrollbar = tk.Scrollbar(log_wrapper, command=self.log_area.yview)
-            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-            self.log_area.config(yscrollcommand=scrollbar.set)
-            self.log_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=tk.YES)
+        except (TypeError, tk.TclError):
+            try:
+                self.log_area = ScrolledText(container, height=12)
+            except Exception:
+                log_wrapper = ttk.Frame(container)
+                log_wrapper.pack(fill=tk.BOTH, expand=tk.YES)
+                self.log_area = tk.Text(log_wrapper, height=12, wrap="word")
+                scrollbar = tk.Scrollbar(log_wrapper, command=self.log_area.yview)
+                scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+                self.log_area.config(yscrollcommand=scrollbar.set)
+                self.log_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=tk.YES)
         else:
             self.log_area.pack(fill=tk.BOTH, expand=tk.YES)
 
@@ -347,55 +324,19 @@ class TIFFConverterGUI:
     def _update_dry_run_ui(self):
         """Update visual elements based on dry-run state."""
         is_dry = bool(self.dry_run_var.get())
-        
         if is_dry:
-            try:
-                self.safety_banner.config(
-                    text="🔒 DRY RUN MODE ACTIVE (Simulation)",
-                    bootstyle="inverse-warning"
-                )
-            except Exception:
-                self.safety_banner.config(text="🔒 DRY RUN MODE ACTIVE (Simulation)")
-            
-            try:
-                self.start_btn.config(
-                    text="🚀 START CONVERSION (DRY RUN)",
-                    bootstyle="warning"
-                )
-            except Exception:
-                self.start_btn.config(text="🚀 START CONVERSION (DRY RUN)")
+            self.safety_banner.config(text="🔒 DRY RUN MODE ACTIVE (Simulation)", bootstyle="inverse-warning")
+            self.start_btn.config(text="🚀 START CONVERSION (DRY RUN)", bootstyle="warning")
         else:
-            try:
-                self.safety_banner.config(
-                    text="⚠️ LIVE MODE - FILES WILL BE MODIFIED",
-                    bootstyle="inverse-danger"
-                )
-            except Exception:
-                self.safety_banner.config(text="⚠️ LIVE MODE - FILES WILL BE MODIFIED")
-            
-            try:
-                self.start_btn.config(
-                    text="🔥 APPLY CHANGES (LIVE)",
-                    bootstyle="success"
-                )
-            except Exception:
-                self.start_btn.config(text="🔥 APPLY CHANGES (LIVE)")
+            self.safety_banner.config(text="⚠️ LIVE MODE - FILES WILL BE MODIFIED", bootstyle="inverse-danger")
+            self.start_btn.config(text="🔥 APPLY CHANGES (LIVE)", bootstyle="success")
 
     def _log_dry_run_status(self):
-        """Log current execution mode to console."""
+        """Log current execution mode."""
         is_dry = bool(self.dry_run_var.get())
-        separator = "=" * 50
-        
-        self.log(separator)
-        if is_dry:
-            self.log("🔒 DRY RUN MODE ENABLED (Default)")
-            self.log("   • No files will be modified")
-            self.log("   • Operations are simulated")
-        else:
-            self.log("⚠️ LIVE MODE ENABLED")
-            self.log("   • Files WILL be modified")
-            self.log("   • Changes are PERMANENT")
-        self.log(separator)
+        self.log("=" * 50)
+        self.log(f"MODE: {'🔒 DRY RUN (Simulation)' if is_dry else '⚠️ LIVE (Permanent Changes)'}")
+        self.log("=" * 50)
 
     def log(self, message):
         """Append message to log area with timestamp."""
@@ -404,7 +345,6 @@ class TIFFConverterGUI:
             self.log_area.insert(tk.END, f"[{timestamp}] {message}\n")
             self.log_area.see(tk.END)
         except Exception:
-            # Fallback to stdout if log_area not available
             print(f"[{timestamp}] {message}")
 
     def browse_directory(self):
@@ -436,7 +376,8 @@ class TIFFConverterGUI:
         threading.Thread(target=self._run_conversion, daemon=True).start()
 
     def _run_conversion(self):
-        """Execute conversion in background thread."""
+        """Execute conversion in background thread with robust error handling."""
+        results = []
         try:
             options = {
                 'create_lzw': self.create_lzw.get(),
@@ -463,31 +404,32 @@ class TIFFConverterGUI:
                 options['output_dir'] = self.source_dir
                 results = batch_process(files, options, progress_callback=self.update_progress)
             
-            success = sum(1 for r in results if r.success)
-            self.root.after(0, lambda: self.log(f"\n✅ Finished: {success}/{len(results)} successful"))
+            success_count = sum(1 for r in results if r.success)
+            total_count = len(results)
+            self.root.after(0, lambda: self.log(f"\n✅ Conversion Complete: {success_count}/{total_count} processed successfully"))
             
         except Exception as e:
             logger.exception("Conversion failed")
             self.root.after(0, lambda: self.log(f"\n❌ Error: {e}"))
         finally:
-            self.root.after(0, self._finish_conversion)
+            self.root.after_idle(self._finish_conversion)
 
     def _finish_conversion(self):
-        """Reset UI after conversion completes."""
+        """Reset UI state after conversion. Called on main thread."""
         self.is_processing = False
         self.start_btn.config(state=tk.NORMAL)
         self.progress_var.set(0)
         self.status_var.set("Ready")
+        self.log("System Ready.")
 
     def update_progress(self, current, total):
-        """Update progress from background thread."""
+        """Update progress from background thread via thread-safe after()."""
         pct = (current / total * 100) if total > 0 else 0
         self.root.after(0, lambda: self.progress_var.set(pct))
         self.root.after(0, lambda: self.status_var.set(f"Processing: {current}/{total}"))
 
 
 def main():
-    """Entry point for GUI application."""
     app = TIFFConverterGUI()
     app.root.mainloop()
 
