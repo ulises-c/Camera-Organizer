@@ -12,6 +12,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from pathlib import Path
 from datetime import datetime
+from threading import Event
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,25 @@ def safe_widget_create(widget_cls, *args, bootstyle=None, **kwargs):
     return widget_cls(*args, **kwargs)
 
 
+class GUILogHandler(logging.Handler):
+    """
+    Thread-safe logging handler that forwards log records to GUI.
+    Uses weak coupling via callable to avoid circular references.
+    """
+    def __init__(self, forward_fn):
+        super().__init__()
+        self.forward_fn = forward_fn
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            # forward_fn must use root.after() for thread safety
+            self.forward_fn(msg)
+        except Exception:
+            # Fail silently to avoid cascading logging errors
+            pass
+
+
 class TIFFConverterGUI:
     def __init__(self):
         _check_dependencies()
@@ -100,7 +120,30 @@ class TIFFConverterGUI:
         )
         self.source_dir = None
         self.is_processing = False
+        
+        # Thread control
+        self.worker_thread = None
+        self.cancel_event = Event()
+        
         self._create_widgets()
+        
+        # Attach logger -> GUI forwarder
+        def _forward_log_to_gui(message):
+            # Ensure execution on main thread for Tkinter safety
+            self.root.after(0, lambda: self.log(message))
+        
+        self._log_handler = GUILogHandler(_forward_log_to_gui)
+        self._log_handler.setLevel(logging.INFO)
+        formatter = logging.Formatter(
+            "[%(asctime)s] %(levelname)s: %(message)s", 
+            "%H:%M:%S"
+        )
+        self._log_handler.setFormatter(formatter)
+        logging.getLogger('photo_organizer').addHandler(self._log_handler)
+        
+        # Cleanup on close
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        
         self._update_dry_run_ui()
         self._log_dry_run_status()
 
@@ -124,7 +167,19 @@ class TIFFConverterGUI:
             bootstyle="warning",
             width=40
         )
-        self.start_btn.pack(side=tk.RIGHT)
+        self.start_btn.pack(side=tk.RIGHT, padx=(5, 0))
+        
+        # Cancel button
+        self.cancel_btn = safe_widget_create(
+            ttk.Button,
+            toolbar_inner,
+            text="✖ Cancel",
+            command=self.cancel_conversion,
+            bootstyle="danger-outline",
+            width=12
+        )
+        self.cancel_btn.pack(side=tk.RIGHT, padx=(5, 0))
+        self.cancel_btn.config(state=tk.DISABLED)
         
         # 2. MAIN SCROLLABLE CONTENT (Pack AFTER toolbar)
         container = ttk.Frame(self.root)
@@ -338,14 +393,25 @@ class TIFFConverterGUI:
         self.log(f"MODE: {'🔒 DRY RUN (Simulation)' if is_dry else '⚠️ LIVE (Permanent Changes)'}")
         self.log("=" * 50)
 
-    def log(self, message):
-        """Append message to log area with timestamp."""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        try:
-            self.log_area.insert(tk.END, f"[{timestamp}] {message}\n")
-            self.log_area.see(tk.END)
-        except Exception:
-            print(f"[{timestamp}] {message}")
+    def log(self, message: str):
+        """
+        Thread-safe logging to UI text widget.
+        Always schedules updates on the Tcl/Tk main loop.
+        """
+        def _append_log():
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            try:
+                self.log_area.insert(tk.END, f"[{timestamp}] {message}\n")
+                self.log_area.see(tk.END)
+            except Exception as e:
+                # Fallback if widget destroyed during exit
+                print(f"Log Error: {e}")
+        
+        # Always use after(0) instead of direct call
+        if hasattr(self, 'root') and self.root.winfo_exists():
+            self.root.after(0, _append_log)
+        else:
+            print(f"[Fallback] {message}")
 
     def browse_directory(self):
         """Browse for source directory."""
@@ -357,6 +423,9 @@ class TIFFConverterGUI:
 
     def start_conversion(self):
         """Primary entry point for conversion."""
+        if self.is_processing:
+            return
+        
         if not self.source_dir:
             messagebox.showwarning("Input Required", "Please select a source folder.")
             return
@@ -367,13 +436,50 @@ class TIFFConverterGUI:
         
         self.is_processing = True
         self.start_btn.config(state=tk.DISABLED)
+        self.cancel_btn.config(state=tk.NORMAL)
+        self.cancel_event.clear()
+        
         try:
             self.log_area.delete("1.0", tk.END)
         except Exception:
             pass
+        
         self._log_dry_run_status()
         
-        threading.Thread(target=self._run_conversion, daemon=True).start()
+        # Start worker and track it
+        self.worker_thread = threading.Thread(
+            target=self._run_conversion, 
+            daemon=True
+        )
+        self.worker_thread.start()
+        
+        # Start watchdog to ensure UI recovery
+        self._start_watchdog()
+
+    def _start_watchdog(self):
+        """Poll worker thread to ensure UI recovery."""
+        def _check_thread():
+            try:
+                if self.worker_thread and self.worker_thread.is_alive():
+                    # Still running, check again in 1 second
+                    self.root.after(1000, _check_thread)
+                    return
+            except Exception:
+                pass
+            
+            # Thread finished or died - ensure cleanup
+            self.root.after(0, self._finish_conversion)
+        
+        self.root.after(1000, _check_thread)
+
+    def cancel_conversion(self):
+        """Request cancellation of ongoing conversion."""
+        if not hasattr(self, "cancel_event"):
+            return
+        
+        self.cancel_event.set()
+        self.log("✋ Cancel requested. Stopping processing...")
+        self.cancel_btn.config(state=tk.DISABLED)
 
     def _run_conversion(self):
         """Execute conversion in background thread with robust error handling."""
@@ -387,7 +493,9 @@ class TIFFConverterGUI:
                 'dry_run': self.dry_run_var.get(),
                 'variant_policy': self.variant_policy.get(),
                 'compression': self.compression_type.get(),
-                'convert_all_variants': self.convert_all_var.get()
+                'convert_all_variants': self.convert_all_var.get(),
+                'cancel_event': self.cancel_event,
+                'workers': 4
             }
             
             if self.epson_mode.get():
@@ -404,29 +512,56 @@ class TIFFConverterGUI:
                 options['output_dir'] = self.source_dir
                 results = batch_process(files, options, progress_callback=self.update_progress)
             
-            success_count = sum(1 for r in results if r.success)
-            total_count = len(results)
-            self.root.after(0, lambda: self.log(f"\n✅ Conversion Complete: {success_count}/{total_count} processed successfully"))
+            if self.cancel_event.is_set():
+                self.log("⚠️ Conversion cancelled by user")
+            else:
+                success_count = sum(1 for r in results if r.success)
+                total_count = len(results)
+                self.root.after(0, lambda: self.log(f"\n✅ Conversion Complete: {success_count}/{total_count} processed successfully"))
             
         except Exception as e:
             logger.exception("Conversion failed")
             self.root.after(0, lambda: self.log(f"\n❌ Error: {e}"))
         finally:
-            self.root.after_idle(self._finish_conversion)
+            # CRITICAL: Use after(0) instead of after_idle for macOS Tcl/Tk 9.0+
+            self.root.after(0, self._finish_conversion)
 
     def _finish_conversion(self):
-        """Reset UI state after conversion. Called on main thread."""
+        """Reset UI state after conversion. Must run on main thread."""
         self.is_processing = False
         self.start_btn.config(state=tk.NORMAL)
+        self.cancel_btn.config(state=tk.DISABLED)
         self.progress_var.set(0)
         self.status_var.set("Ready")
-        self.log("System Ready.")
+        self.worker_thread = None
+        self.cancel_event = Event()  # Fresh event for next run
+        self.log("🏁 System Ready.")
+
+    def _on_close(self):
+        """Cleanup on window close."""
+        try:
+            logging.getLogger('photo_organizer').removeHandler(self._log_handler)
+        except Exception:
+            pass
+        try:
+            if self.cancel_event:
+                self.cancel_event.set()
+        except Exception:
+            pass
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
 
     def update_progress(self, current, total):
-        """Update progress from background thread via thread-safe after()."""
+        """Thread-safe progress updates."""
         pct = (current / total * 100) if total > 0 else 0
-        self.root.after(0, lambda: self.progress_var.set(pct))
-        self.root.after(0, lambda: self.status_var.set(f"Processing: {current}/{total}"))
+        
+        def _update():
+            self.progress_var.set(pct)
+            self.status_var.set(f"Processing: {current}/{total}")
+        
+        self.root.after(0, _update)
 
 
 def main():

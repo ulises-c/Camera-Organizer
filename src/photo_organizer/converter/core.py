@@ -68,6 +68,7 @@ def create_lzw_copy(
         result.output_size_bytes = 0
         result.warnings.append("DRY RUN - no files written")
         result.duration_seconds = time.time() - start_time
+        logger.info(f"DRY RUN: simulated {compression.upper()} for {source_path.name}")
         return result
 
     try:
@@ -147,6 +148,7 @@ def create_heic_copy(
         result.output_size_bytes = 0
         result.warnings.append("DRY RUN - no files written")
         result.duration_seconds = time.time() - start_time
+        logger.info(f"DRY RUN: simulated HEIC for {source_path.name}")
         return result
 
     try:
@@ -263,10 +265,16 @@ def batch_process(
     workers = options.get("workers", 4)
     total = len(files)
     completed = 0
+    cancel_event = options.get('cancel_event', None)
 
     # Sequential processing for dry-run to avoid ProcessPoolExecutor issues on macOS
     if options.get("dry_run", False) or workers == 1:
         for f in files:
+            # Check for cancellation
+            if cancel_event and cancel_event.is_set():
+                logger.info("Processing cancelled by user")
+                break
+            
             try:
                 file_results = process_single_file(f, options)
                 results.extend(file_results)
@@ -285,6 +293,11 @@ def batch_process(
         }
         
         for future in as_completed(futures):
+            # Check for cancellation
+            if cancel_event and cancel_event.is_set():
+                logger.info("Processing cancelled by user")
+                break
+            
             try:
                 file_results = future.result()
                 results.extend(file_results)
@@ -313,6 +326,7 @@ def process_epson_folder(
     - Option to convert all variants (skip selection entirely)
     - Originals moved only after successful conversion
     - Dry run mode: No directories created, no files written/moved
+    - Cancel event: Stop processing if requested
     
     Args:
         folder_path: Source directory
@@ -325,6 +339,7 @@ def process_epson_folder(
             - verify: bool
             - dry_run: bool
             - convert_all_variants: bool (skip selection, convert all)
+            - cancel_event: threading.Event for cancellation
     """
     from photo_organizer.converter.variant_selection import group_variants, choose_best_variant
     
@@ -336,6 +351,7 @@ def process_epson_folder(
     compression = options.get('compression', 'lzw')
     heic_quality = options.get('heic_quality', 90)
     verify = options.get('verify', True)
+    cancel_event = options.get('cancel_event', None)
     
     # Create output directories
     lzw_dir = folder_path / "LZW_compressed"
@@ -362,6 +378,11 @@ def process_epson_folder(
     total = len(groups)
     
     for idx, (stem, variants) in enumerate(groups.items(), 1):
+        # Check for cancellation
+        if cancel_event and cancel_event.is_set():
+            logger.info("Processing cancelled by user")
+            break
+        
         # Partition variants (case-insensitive suffix detection)
         backside_files = [p for p in variants if p.stem.lower().endswith('_b')]
         front_candidates = [p for p in variants if not p.stem.lower().endswith('_b')]
@@ -456,6 +477,9 @@ def process_epson_folder(
         
         if progress_callback:
             progress_callback(idx, total)
+    
+    if dry_run:
+        logger.info("✓ Dry run completed - no files modified")
     
     return results
 

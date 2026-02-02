@@ -7,11 +7,8 @@ from pathlib import Path
 import appdirs
 
 
-# NOTE: APP_AUTHOR and APP_NAME are used by appdirs to create the user data directory.
-# BUG: This only works for my machine, does not support a generic setup.
-# TODO: Think of a different solution.
 APP_NAME = "photo_organizer"
-APP_AUTHOR = "UlisesChavarria"
+APP_AUTHOR = "PhotoOrganizerProject"  # Generic, not user-specific
 
 DEFAULT_MODELS = [
     {
@@ -74,7 +71,6 @@ def _migrate_from_txt_if_needed():
     txt_path = get_legacy_txt_path()
     seed_dir = Path(__file__).parent.parent / "data"
     seed_json = seed_dir / "camera_models_seed.json"
-    # TODO: Remove txt seed support in future versions
     seed_txt = seed_dir / "camera_models_seed.txt"
 
     models = []
