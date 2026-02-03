@@ -6,14 +6,41 @@ from pathlib import Path
 from datetime import datetime
 import logging
 import sys
+import os
+import errno
+import atexit
+import appdirs
 
-from photo_organizer.converter.core import process_epson_folder, save_report, HEIF_SAVE_AVAILABLE
+from photo_organizer.converter.core import process_epson_folder, save_report, HEIF_SAVE_AVAILABLE, OperationCancelled
 from photo_organizer.shared.gui_utils import ToolTip
 
 # Set up module logger that propagates to root (and thus to Launcher's listener)
 logger = logging.getLogger("photo_organizer.converter.gui")
 if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+
+def _lock_path_for(tool_name: str) -> Path:
+    d = Path(appdirs.user_data_dir("photo_organizer", "PhotoOrganizerProject"))
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{tool_name}.lock"
+
+def _acquire_lock(lock_path: Path) -> None:
+    # atomic create
+    try:
+        fd = os.open(str(lock_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        with os.fdopen(fd, "w") as f:
+            f.write(str(os.getpid()))
+    except OSError as e:
+        if e.errno in (errno.EEXIST, errno.EACCES):
+            raise RuntimeError("already_running")
+        raise
+
+def _release_lock(lock_path: Path) -> None:
+    try:
+        if lock_path:
+            lock_path.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 def safe_widget_create(widget_cls, parent, **kwargs):
     """
@@ -55,6 +82,21 @@ class TIFFConverterGUI:
         self._create_layout()
         self._update_dry_run_state()
         self._toggle_ff()
+
+        # Single instance lock
+        self._lock_path = _lock_path_for("tiff_converter")
+        try:
+            _acquire_lock(self._lock_path)
+        except RuntimeError as e:
+            if str(e) == "already_running":
+                messagebox.showwarning(
+                    "Already running",
+                    "TIFF Converter is already running (only one instance is allowed)."
+                )
+                self.root.destroy()
+                raise SystemExit(1)
+            raise
+        atexit.register(_release_lock, self._lock_path)
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -195,10 +237,11 @@ class TIFFConverterGUI:
             self.start_btn.config(text="EXECUTE LIVE", bootstyle="success")
 
     def log(self, msg):
-        self.root.after(0, lambda: self._log_safe(msg))
+        # Always marshal to Tk thread
+        self.root.after(0, lambda: self._append_log(msg))
         logger.info(msg) # Propagate to console
 
-    def _log_safe(self, msg):
+    def _append_log(self, msg: str):
         self.log_area.config(state='normal')
         self.log_area.insert(tk.END, f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n")
         self.log_area.see(tk.END)
@@ -215,15 +258,27 @@ class TIFFConverterGUI:
         if not self.source_dir:
             messagebox.showwarning("Error", "Select a folder.")
             return
+        if self.is_processing:
+            self.log("A process is already running.")
+            return
+
+        # Immediate user feedback
+        self.log(f"Starting process (dry_run={self.dry_run.get()})...")
+        self.status_var.set("Starting...")
+        self.progress_val.set(0)
+        self.root.update_idletasks()
+
         self.is_processing = True
         self.start_btn.config(state="disabled")
         self.cancel_btn.config(state="normal")
         self.cancel_event.clear()
-        self.progress_val.set(0)
-        self.status_var.set("Working...")
+
         Thread(target=self._worker, daemon=True).start()
 
     def cancel(self):
+        if not self.is_processing:
+            self.log("No process running.")
+            return
         self.cancel_event.set()
         self.status_var.set("Stopping...")
         self.log("Cancellation requested...")
@@ -242,16 +297,20 @@ class TIFFConverterGUI:
             'cancel_event': self.cancel_event
         }
         try:
+            self.log("Process initialized; beginning conversion.")
             results = process_epson_folder(self.source_dir, opts, self._update_progress, self.log)
             
-            rep = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            save_report(results, self.source_dir / rep)
-            self.log(f"Report saved: {rep}")
+            rep_name = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            save_report(results, self.source_dir / rep_name)
+            self.log(f"Report saved: {rep_name}")
             
             if self.cancel_event.is_set():
-                 self.log("🛑 Process Stopped.")
+                 self.log("Cancelled.")
             else:
-                 self.root.after(0, lambda: messagebox.showinfo("Success", f"Processed {len(results)} groups."))
+                 self.log("Complete.")
+                 self.root.after(0, lambda: messagebox.showinfo("Success", f"Processing complete. {len(results)} groups processed."))
+        except OperationCancelled:
+            self.log("Cancelled.")
         except Exception as e:
             self.log(f"Error: {e}")
         finally:
@@ -259,8 +318,7 @@ class TIFFConverterGUI:
 
     def _update_progress(self, val):
         self.root.after(0, lambda: self.progress_val.set(val))
-        # Critical for macOS responsiveness during threads
-        self.root.after(0, self.root.update_idletasks)
+        self.root.after(0, lambda: self.status_var.set(f"Processing: {int(val)}%"))
 
     def _reset(self):
         self.is_processing = False
@@ -269,9 +327,11 @@ class TIFFConverterGUI:
         self.status_var.set("Ready")
 
     def _on_close(self):
-        if self.is_processing:
-            if not messagebox.askyesno("Exit", "Stop process and exit?"): return
+        if getattr(self, "is_processing", False):
+            if not messagebox.askyesno("Exit", "A process is running. Cancel and exit?"):
+                return
             self.cancel()
+        _release_lock(getattr(self, "_lock_path", None))
         self.root.destroy()
 
 if __name__ == "__main__":

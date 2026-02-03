@@ -89,25 +89,31 @@ class LauncherApp:
         btn.pack(side=tk.RIGHT)
 
     def launch_tool(self, module_name, btn):
-        # 1. Check existing
-        if module_name in self.processes:
-            p = self.processes[module_name]['proc']
-            if p.poll() is None:
+        # 1. Check existing (Global guard)
+        # Block launching if ANY tool is running
+        for m, info in list(self.processes.items()):
+            p = info.get("proc")
+            if p and p.poll() is None:
                 messagebox.showwarning(
-                    "Running", f"{module_name} is already running.")
+                    "Running",
+                    f"Another tool is already running ({m}). Only one tool can run at a time."
+                )
                 return
-            else:
-                del self.processes[module_name]
+        
+        # Cleanup finished processes
+        if module_name in self.processes:
+            del self.processes[module_name]
 
         try:
             # 2. Prepare Environment
             env = os.environ.copy()
             root_dir = str(Path(__file__).parent.parent)
             env["PYTHONPATH"] = f"{root_dir}{os.pathsep}{env.get('PYTHONPATH', '')}"
+            env["PYTHONUNBUFFERED"] = "1"
 
-            # 3. Launch with stdout capture
+            # 3. Launch with stdout capture (unbuffered)
             proc = subprocess.Popen(
-                [sys.executable, "-m", module_name],
+                [sys.executable, "-u", "-m", module_name],
                 env=env, cwd=os.getcwd(),
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 bufsize=1, universal_newlines=True

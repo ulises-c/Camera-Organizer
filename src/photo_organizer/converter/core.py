@@ -225,33 +225,38 @@ def _save_tiff(src: Path, dest: Path, algo: str, cancel_event):
     Saves TIFF with robust metadata handling.
     Prevents 'Error setting from dictionary' crashes by sanitizing tags.
     """
+    _check_cancel(cancel_event)
     comp = 'tiff_adobe_deflate' if algo == 'deflate' else 'tiff_lzw'
     
+    # Ensure directory exists before heavy work
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
     with Image.open(src) as img:
         _check_cancel(cancel_event)
         
         # 1. Attempt to preserve valid tags (TIFF-to-TIFF)
-        # We use tiffinfo instead of exif/tag_v2 to avoid Dictionary encoding errors
-        # common with custom scanner tags (Epson/Canon).
         try:
-            # Filter for standard tags if needed, or pass None if simple copy fails
             tags = img.tag if hasattr(img, 'tag') else None
-            dest.parent.mkdir(parents=True, exist_ok=True)
+            _check_cancel(cancel_event)
             img.save(dest, compression=comp, tiffinfo=tags)
+        except OperationCancelled:
+            raise
         except Exception as e:
             logger.warning(f"Metadata save failed for {src.name}, falling back to clean save: {e}")
-            # 2. Fallback: Save image data only (strips problematic metadata)
+            # 2. Fallback: Save image data only
             if img.mode not in ("RGB", "L", "CMYK"):
                 img = img.convert("RGB")
-            dest.parent.mkdir(parents=True, exist_ok=True)
+            _check_cancel(cancel_event)
             img.save(dest, compression=comp)
 
 def _save_image(src, dest, fmt, qual, cancel_event):
+    _check_cancel(cancel_event)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
     with Image.open(src) as img:
         _check_cancel(cancel_event)
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
-        dest.parent.mkdir(parents=True, exist_ok=True)
         _check_cancel(cancel_event)
         img.save(dest, format=fmt, quality=qual)
 
