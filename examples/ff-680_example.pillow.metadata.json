@@ -1,0 +1,58 @@
+{
+  "core": {
+    "format": "TIFF",
+    "mode": "RGBA",
+    "size": [1405, 2167],
+    "info_keys": ["compression", "dpi", "xmp"]
+  },
+  "resolution": {
+    "x": 600.0,
+    "y": 600.0,
+    "unit": "dpi"
+  },
+  "icc_profile": {
+    "present": false,
+    "bytes": 0
+  },
+  "exif": {
+    "ImageWidth": 1405,
+    "ImageLength": 2167,
+    "BitsPerSample": [8, 8, 8, 8],
+    "Compression": 1,
+    "PhotometricInterpretation": 2,
+    "FillOrder": 1,
+    "StripOffsets": [
+      "modified for readability:",
+      "start=8",
+      "offset=5620",
+      "repetitions=2166",
+      "end=12172928",
+      8,
+      12172928
+    ],
+    "Orientation": 1,
+    "SamplesPerPixel": 4,
+    "RowsPerStrip": 1,
+    "StripByteCounts": [
+      "modified for readability:",
+      "value: 5620",
+      "repeated 2167 times"
+    ],
+    "XResolution": 600.0,
+    "YResolution": 600.0,
+    "PlanarConfiguration": 1,
+    "ResolutionUnit": 2,
+    "PageNumber": [0, 1],
+    "XMLPacket": "<2461 bytes>",
+    "WhitePoint": [0.31270000322551933, 0.32899999602907337],
+    "PrimaryChromaticities": [
+      0.6399999856110662, 0.3300000129570253, 0.3000000117579475,
+      0.6000000237487256, 0.15000000576255842, 0.05999999844003469
+    ],
+    "ImageResources": "<28 bytes>",
+    "ExtraSamples": 2
+  },
+  "tiff": {
+    "_error": "module 'PIL.TiffImagePlugin' has no attribute 'TAGS_V2'"
+  }
+}

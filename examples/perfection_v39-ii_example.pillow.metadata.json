@@ -1,0 +1,48 @@
+{
+  "core": {
+    "format": "TIFF",
+    "mode": "RGB",
+    "size": [1912, 2496],
+    "info_keys": ["compression", "dpi"]
+  },
+  "resolution": {
+    "x": 600.0,
+    "y": 600.0,
+    "unit": "dpi"
+  },
+  "icc_profile": {
+    "present": false,
+    "bytes": 0
+  },
+  "exif": {
+    "ImageWidth": 1912,
+    "ImageLength": 2496,
+    "BitsPerSample": [8, 8, 8],
+    "Compression": 1,
+    "PhotometricInterpretation": 2,
+    "ResolutionUnit": 2,
+    "StripOffsets": [
+      8,
+      "modified for readability:",
+      "start=8",
+      "offset= 5744-8=5736",
+      "repeated addition of 5736 a total of 2495 times",
+      "end=14311328",
+      14311328
+    ],
+    "Orientation": 1,
+    "SamplesPerPixel": 3,
+    "RowsPerStrip": 1,
+    "StripByteCounts": [
+      "modified for readability:",
+      "value: 5736",
+      "repeated 2496 times"
+    ],
+    "XResolution": 600.0,
+    "YResolution": 600.0,
+    "PlanarConfiguration": 1
+  },
+  "tiff": {
+    "_error": "module 'PIL.TiffImagePlugin' has no attribute 'TAGS_V2'"
+  }
+}

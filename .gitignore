@@ -187,3 +187,8 @@ cython_debug/
 
 # Migration
 old/
+
+# example images
+examples/*.tif
+examples/*.jpg
+examples/*.heic
