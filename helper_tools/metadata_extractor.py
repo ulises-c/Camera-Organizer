@@ -1,25 +1,23 @@
-from PIL import Image, ExifTags, TiffImagePlugin
+import json
+import subprocess
 from pathlib import Path
-import pprint
-
-# ==========================================================
-# CONFIG
-# ==========================================================
-
-IMAGE_PATH = Path("examples/1996_0001.tif")  # <-- EDIT THIS
+from PIL import Image, ExifTags, TiffImagePlugin
+from PIL.TiffImagePlugin import IFDRational
 
 # ==========================================================
 # UTILITIES
 # ==========================================================
 
+
 def safe_call(fn, default=None):
     try:
         return fn()
-    except Exception:
-        return default
+    except Exception as e:
+        return {"_error": str(e)}
 
 
 def decode_tiff_tag(tag_id):
+    # NOTE: I have been told TAGS_V2 was removed/refactored, may need to adjust this implementation for reliability
     return TiffImagePlugin.TAGS_V2.get(tag_id, f"Unknown({tag_id})")
 
 
@@ -27,17 +25,36 @@ def decode_exif_tag(tag_id):
     return ExifTags.TAGS.get(tag_id, f"Unknown({tag_id})")
 
 
+def json_safe(value):
+    """
+    Recursively convert Pillow / TIFF-specific types
+    into JSON-serializable primitives.
+    """
+    if isinstance(value, IFDRational):
+        return float(value)
+
+    if isinstance(value, bytes):
+        return f"<{len(value)} bytes>"
+
+    if isinstance(value, dict):
+        return {k: json_safe(v) for k, v in value.items()}
+
+    if isinstance(value, (list, tuple)):
+        return [json_safe(v) for v in value]
+
+    return value
+
+
 # ==========================================================
-# METADATA EXTRACTION
+# PILLOW METADATA EXTRACTION
 # ==========================================================
 
-def extract_metadata(img: Image.Image):
+def extract_metadata_pillow(img: Image.Image):
     meta = {}
 
-    # ------------------------------------------------------
-    # Core image info (always safe)
-    # ------------------------------------------------------
-
+    # -------------------------------
+    # Core image info
+    # -------------------------------
     meta["core"] = {
         "format": img.format,
         "mode": img.mode,
@@ -45,59 +62,49 @@ def extract_metadata(img: Image.Image):
         "info_keys": sorted(img.info.keys()),
     }
 
-    # ------------------------------------------------------
-    # Resolution (normalized)
-    # ------------------------------------------------------
-
+    # -------------------------------
+    # Resolution
+    # -------------------------------
     def get_resolution():
         dpi = img.info.get("dpi")
         if dpi:
             return {"x": dpi[0], "y": dpi[1], "unit": "dpi"}
 
-        xres = img.tag_v2.get(282) if hasattr(img, "tag_v2") else None
-        yres = img.tag_v2.get(283) if hasattr(img, "tag_v2") else None
-
-        if xres and yres:
-            return {
-                "x": float(xres),
-                "y": float(yres),
-                "unit": "dpi (TIFF)",
-            }
-
+        if hasattr(img, "tag_v2"):
+            x = img.tag_v2.get(282)  # XResolution
+            y = img.tag_v2.get(283)  # YResolution
+            if x and y:
+                return {"x": float(x), "y": float(y), "unit": "dpi (TIFF)"}
         return None
 
     meta["resolution"] = safe_call(get_resolution)
 
-    # ------------------------------------------------------
+    # -------------------------------
     # ICC profile
-    # ------------------------------------------------------
-
+    # -------------------------------
     icc = img.info.get("icc_profile")
     meta["icc_profile"] = {
         "present": icc is not None,
         "bytes": len(icc) if icc else 0,
     }
 
-    # ------------------------------------------------------
-    # EXIF metadata (camera-style)
-    # ------------------------------------------------------
-
+    # -------------------------------
+    # EXIF (camera-style)
+    # -------------------------------
     def get_exif():
         exif = img.getexif()
         if not exif:
             return None
-
-        decoded = {}
-        for tag_id, value in exif.items():
-            decoded[decode_exif_tag(tag_id)] = value
-        return decoded
+        return {
+            decode_exif_tag(tag_id): value
+            for tag_id, value in exif.items()
+        }
 
     meta["exif"] = safe_call(get_exif)
 
-    # ------------------------------------------------------
+    # -------------------------------
     # TIFF tags (scanner-style)
-    # ------------------------------------------------------
-
+    # -------------------------------
     def get_tiff_tags():
         if not hasattr(img, "tag_v2"):
             return None
@@ -105,50 +112,87 @@ def extract_metadata(img: Image.Image):
         tags = {}
         for tag_id, value in img.tag_v2.items():
             name = decode_tiff_tag(tag_id)
-
-            # Make values printable
-            if isinstance(value, (list, tuple)):
-                value = list(value)
-            elif isinstance(value, bytes):
-                value = f"<{len(value)} bytes>"
-
             tags[name] = value
-
         return tags
 
     meta["tiff"] = safe_call(get_tiff_tags)
-
-    # ------------------------------------------------------
-    # Scanner-identifying fields (best effort)
-    # ------------------------------------------------------
-
-    def get_scanner_info():
-        tiff = meta.get("tiff") or {}
-        return {
-            "Make": tiff.get("Make"),
-            "Model": tiff.get("Model"),
-            "Software": tiff.get("Software"),
-            "DateTime": tiff.get("DateTime"),
-        }
-
-    meta["scanner"] = safe_call(get_scanner_info)
 
     return meta
 
 
 # ==========================================================
-# MAIN
+# EXIFTOOL METADATA EXTRACTION
+# ==========================================================
+
+def extract_metadata_exiftool(image_path: Path):
+    try:
+        result = subprocess.run(
+            ["exiftool", "-json", "-G", "-n", str(image_path)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        data = json.loads(result.stdout)
+        return data[0] if data else {}
+    except FileNotFoundError:
+        return {"_error": "exiftool not found on PATH"}
+    except subprocess.CalledProcessError as e:
+        return {
+            "_error": "exiftool failed",
+            "stderr": e.stderr,
+        }
+
+
+# ==========================================================
+# MAIN (HARDCODED IMAGE LIST)
 # ==========================================================
 
 def main():
-    if not IMAGE_PATH.exists():
-        raise FileNotFoundError(f"Image not found: {IMAGE_PATH}")
+    image_paths = [
+        Path("examples/1996_0001.tif"),
+        Path("examples/img20260131_15340430.tif"),
+        # Path("examples/another_image.jpg"),
+    ]
 
-    with Image.open(IMAGE_PATH) as img:
-        metadata = extract_metadata(img)
+    for image_path in image_paths:
+        print(f"\n🔍 Analyzing: {image_path}")
 
-    print("\n=== Extracted Metadata ===\n")
-    pprint.pprint(metadata, sort_dicts=False)
+        if not image_path.exists():
+            print(f"⚠️  Skipping missing file: {image_path}")
+            continue
+
+        output_dir = image_path.parent
+        stem = image_path.stem
+
+        # ---------------------------
+        # Pillow extraction
+        # ---------------------------
+        try:
+            with Image.open(image_path) as img:
+                pillow_meta = extract_metadata_pillow(img)
+        except Exception as e:
+            pillow_meta = {"_error": f"Pillow failed: {e}"}
+
+        pillow_out = output_dir / f"{stem}.pillow.metadata.json"
+        pillow_out.write_text(
+            json.dumps(json_safe(pillow_meta), indent=2, sort_keys=False),
+            encoding="utf-8",
+        )
+
+        # ---------------------------
+        # ExifTool extraction
+        # ---------------------------
+        exiftool_meta = extract_metadata_exiftool(image_path)
+        exiftool_out = output_dir / f"{stem}.exiftool.metadata.json"
+        exiftool_out.write_text(
+            json.dumps(exiftool_meta, indent=2, sort_keys=False),
+            encoding="utf-8",
+        )
+
+        print(f"  ✔ Pillow:   {pillow_out.name}")
+        print(f"  ✔ ExifTool: {exiftool_out.name}")
+
+    print("\n✅ Batch metadata analysis complete.")
 
 
 if __name__ == "__main__":
