@@ -284,6 +284,8 @@ class TIFFConverterGUI:
         self.log("Cancellation requested...")
 
     def _worker(self):
+        results = []
+        show_success = False
         opts = {
             'dry_run': self.dry_run.get(),
             'compression': self.compression.get(),
@@ -306,15 +308,25 @@ class TIFFConverterGUI:
             
             if self.cancel_event.is_set():
                  self.log("Cancelled.")
+                 show_success = False
             else:
                  self.log("Complete.")
-                 self.root.after(0, lambda: messagebox.showinfo("Success", f"Processing complete. {len(results)} groups processed."))
+                 show_success = True
         except OperationCancelled:
             self.log("Cancelled.")
+            show_success = False
         except Exception as e:
             self.log(f"Error: {e}")
+            show_success = False
         finally:
+            # 1) Reset UI FIRST (must run on main thread)
             self.root.after(0, self._reset)
+
+            # 2) Only after reset, optionally show modal (also on main thread)
+            if show_success:
+                def _show_done():
+                    messagebox.showinfo("Success", f"Processing complete. {len(results)} groups processed.")
+                self.root.after(200, _show_done)
 
     def _update_progress(self, val):
         self.root.after(0, lambda: self.progress_val.set(val))

@@ -21,6 +21,8 @@ except ImportError:
     HEIF_SAVE_AVAILABLE = False
     from PIL import Image
 
+from PIL.TiffImagePlugin import IFDRational
+
 # Ensure these imports exist in your project structure
 from photo_organizer.converter.variant_selection import group_variants, choose_best_variant, OperationCancelled
 
@@ -41,6 +43,81 @@ class ConversionResult:
     source_stem: str
     success: bool
     details: List[OpDetail] = field(default_factory=list)
+
+# Tags Pillow should not be asked to “re-set” because they are computed for the new encoding
+EXCLUDED_TIFF_TAGS = {
+    273,  # StripOffsets
+    278,  # RowsPerStrip
+    279,  # StripByteCounts
+    322, 323, 324, 325,  # TileWidth/Length/Offsets/ByteCounts
+    330,  # SubIFDs
+}
+
+def _sanitize_tiff_tags(tags) -> dict:
+    """
+    Build a Pillow-acceptable tiffinfo mapping from scanner TIFF tags.
+    Keep only safe tag IDs and simple value types.
+    """
+    safe = {}
+    if not tags:
+        return safe
+
+    # tags may be dict-like (tag_v2) or TiffImagePlugin.ImageFileDirectory_v2
+    try:
+        items = tags.items()
+    except Exception:
+        try:
+            items = list(tags)
+        except Exception:
+            return safe
+
+    for tag_id, value in items:
+        try:
+            tid = int(tag_id)
+        except Exception:
+            continue
+
+        if tid in EXCLUDED_TIFF_TAGS:
+            continue
+
+        v = value
+
+        # skip binary blobs (common in scanner TIFFs; Pillow won't accept in tiffinfo)
+        if isinstance(v, (bytes, bytearray)):
+            continue
+
+        # rationals: convert to float
+        if isinstance(v, IFDRational):
+            safe[tid] = float(v)
+            continue
+
+        # primitives
+        if isinstance(v, (int, float, str)):
+            safe[tid] = v
+            continue
+
+        # small sequences of primitives
+        if isinstance(v, (list, tuple)):
+            if len(v) > 64:  # defensive: avoid huge arrays
+                continue
+            cleaned = []
+            ok = True
+            for e in v:
+                if isinstance(e, IFDRational):
+                    cleaned.append(float(e))
+                elif isinstance(e, (int, float, str)):
+                    cleaned.append(e)
+                else:
+                    ok = False
+                    break
+            if ok:
+                safe[tid] = tuple(cleaned)
+            continue
+
+        # anything else: skip
+        continue
+
+    return safe
 
 def _check_cancel(cancel_event):
     """Checks if cancellation was requested and raises exception to stop flow."""
@@ -236,9 +313,14 @@ def _save_tiff(src: Path, dest: Path, algo: str, cancel_event):
         
         # 1. Attempt to preserve valid tags (TIFF-to-TIFF)
         try:
-            tags = img.tag if hasattr(img, 'tag') else None
+            raw_tags = getattr(img, "tag_v2", None) or getattr(img, "tag", None)
+            tiffinfo = _sanitize_tiff_tags(raw_tags)
+            
             _check_cancel(cancel_event)
-            img.save(dest, compression=comp, tiffinfo=tags)
+            if tiffinfo:
+                img.save(dest, compression=comp, tiffinfo=tiffinfo)
+            else:
+                img.save(dest, compression=comp)
         except OperationCancelled:
             raise
         except Exception as e:
