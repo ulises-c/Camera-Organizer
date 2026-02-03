@@ -25,6 +25,17 @@ def _lock_path_for(tool_name: str) -> Path:
     return d / f"{tool_name}.lock"
 
 def _acquire_lock(lock_path: Path) -> None:
+    if lock_path.exists():
+        try:
+            pid = int(lock_path.read_text(encoding="utf-8").strip())
+            os.kill(pid, 0)  # alive?
+            raise RuntimeError("already_running")
+        except ProcessLookupError:
+            lock_path.unlink(missing_ok=True)
+        except Exception:
+            # unreadable or permission weirdness -> treat as “running” conservatively
+            raise RuntimeError("already_running")
+
     # atomic create
     try:
         fd = os.open(str(lock_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
@@ -35,10 +46,31 @@ def _acquire_lock(lock_path: Path) -> None:
             raise RuntimeError("already_running")
         raise
 
-def _release_lock(lock_path: Path) -> None:
+def _release_lock(lock_path: Path | None) -> None:
     try:
-        if lock_path:
+        if not lock_path or not lock_path.exists():
+            return
+
+        content = lock_path.read_text(encoding="utf-8").strip()
+        try:
+            pid = int(content)
+        except Exception:
+            # corrupted/unreadable -> stale
             lock_path.unlink(missing_ok=True)
+            return
+
+        if pid == os.getpid():
+            lock_path.unlink(missing_ok=True)
+            return
+
+        # remove stale locks (PID not alive)
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            lock_path.unlink(missing_ok=True)
+        except Exception:
+            # if we can't determine, be conservative
+            pass
     except Exception:
         pass
 
@@ -103,6 +135,7 @@ class TIFFConverterGUI:
     def _init_vars(self):
         self.path_var = tk.StringVar(value="Select source folder...")
         self.dry_run = tk.BooleanVar(value=True)
+        self.create_tiff = tk.BooleanVar(value=True)
         self.compression = tk.StringVar(value="deflate")
         self.create_heic = tk.BooleanVar(value=HEIF_SAVE_AVAILABLE)
         self.heic_qual = tk.IntVar(value=100)
@@ -154,8 +187,11 @@ class TIFFConverterGUI:
         # TIFF Row
         row_tif = ttk.Frame(inner_opt)
         row_tif.pack(fill=tk.X, pady=5)
-        # Fix: Moved width to constructor (via safe_widget_create or explicit arg) or use padding
-        ttk.Label(row_tif, text="Lossless TIFF:", font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=(0, 10))
+        
+        cb_tif = safe_widget_create(ttk.Checkbutton, row_tif, text="Create Lossless TIFF (Required)", variable=self.create_tiff, bootstyle="success-round-toggle", width=25)
+        cb_tif.pack(side=tk.LEFT, padx=(0, 10))
+        cb_tif.configure(state="disabled")
+        
         r1 = ttk.Radiobutton(row_tif, text="Deflate (.ZIP.TIF)", variable=self.compression, value="deflate")
         r1.pack(side=tk.LEFT, padx=10)
         r2 = ttk.Radiobutton(row_tif, text="LZW (.LZW.TIF)", variable=self.compression, value="lzw")
@@ -256,87 +292,121 @@ class TIFFConverterGUI:
 
     def start(self):
         if not self.source_dir:
-            messagebox.showwarning("Error", "Select a folder.")
+            messagebox.showwarning("Error", "Select a folder first.")
             return
         if self.is_processing:
-            self.log("A process is already running.")
             return
 
-        # Immediate user feedback
-        self.log(f"Starting process (dry_run={self.dry_run.get()})...")
-        self.status_var.set("Starting...")
-        self.progress_val.set(0)
-        self.root.update_idletasks()
-
         self.is_processing = True
-        self.start_btn.config(state="disabled")
-        self.cancel_btn.config(state="normal")
         self.cancel_event.clear()
+        self.progress_val.set(0)
 
+        self.start_btn.config(state=tk.DISABLED)
+        self.cancel_btn.config(state=tk.NORMAL)
+
+        self.log(f"Starting process (dry_run={self.dry_run.get()})...")
         Thread(target=self._worker, daemon=True).start()
 
     def cancel(self):
-        if not self.is_processing:
-            self.log("No process running.")
+        # immediate UX feedback; avoid "cancel after complete"
+        if not getattr(self, "is_processing", False):
             return
         self.cancel_event.set()
-        self.status_var.set("Stopping...")
+        try:
+            self.cancel_btn.config(state=tk.DISABLED)
+        except Exception:
+            pass
+        try:
+            self.status_var.set("Cancelling...")
+        except Exception:
+            pass
         self.log("Cancellation requested...")
 
-    def _worker(self):
-        results = []
-        show_success = False
-        opts = {
-            'dry_run': self.dry_run.get(),
-            'compression': self.compression.get(),
-            'create_heic': self.create_heic.get(),
-            'heic_quality': self.heic_qual.get(),
-            'create_jpg': self.create_jpg.get(),
-            'jpg_quality': self.jpg_qual.get(),
-            'variant_policy': self.ff_policy.get() if self.ff_enabled.get() else 'none',
-            'variant_smart_archiving': self.ff_smart_archive.get(),
-            'variant_smart_conversion': self.ff_smart_convert.get(),
-            'cancel_event': self.cancel_event
-        }
-        try:
-            self.log("Process initialized; beginning conversion.")
-            results = process_epson_folder(self.source_dir, opts, self._update_progress, self.log)
-            
-            rep_name = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            save_report(results, self.source_dir / rep_name)
-            self.log(f"Report saved: {rep_name}")
-            
-            if self.cancel_event.is_set():
-                 self.log("Cancelled.")
-                 show_success = False
-            else:
-                 self.log("Complete.")
-                 show_success = True
-        except OperationCancelled:
-            self.log("Cancelled.")
-            show_success = False
-        except Exception as e:
-            self.log(f"Error: {e}")
-            show_success = False
-        finally:
-            # 1) Reset UI FIRST (must run on main thread)
-            self.root.after(0, self._reset)
+    def _finalize_run(self, *, success: bool, cancelled: bool, report_name: str | None = None, err: str | None = None):
+        """
+        Runs on Tk main thread only. Resets UI and optionally shows a dialog.
+        """
+        # Reset state FIRST (prevents “stuck” + close prompt confusion)
+        self.is_processing = False
 
-            # 2) Only after reset, optionally show modal (also on main thread)
-            if show_success:
-                def _show_done():
-                    messagebox.showinfo("Success", f"Processing complete. {len(results)} groups processed.")
-                self.root.after(200, _show_done)
+        # best-effort: release instance lock so launcher can re-open immediately if user closes
+        # (Though lock is primarily cleared on exit, checking it here doesn't hurt)
+        try:
+            if not getattr(self, "root", None) or not self.root.winfo_exists():
+                return
+        except Exception:
+            pass
+
+        try:
+            self.start_btn.config(state=tk.NORMAL)
+            self.cancel_btn.config(state=tk.DISABLED)
+            self.status_var.set("Ready")
+            self.progress_val.set(0)
+        except Exception:
+            pass
+
+        # Optional dialogs: schedule slightly later to avoid Tk/macOS modal weirdness
+        if err:
+            self.root.after(50, lambda: messagebox.showerror("Error", err))
+        elif cancelled:
+            # Usually no dialog needed; if you do, keep it non-blocking-ish
+            self.root.after(50, lambda: messagebox.showinfo("Cancelled", "Operation cancelled."))
+        elif success:
+            msg = "Task finished."
+            if report_name:
+                msg += f"\nReport: {report_name}"
+            self.root.after(50, lambda: messagebox.showinfo("Complete", msg))
+
+    def _worker(self):
+        src = self.source_dir
+        report_name = None
+        cancelled = False
+        err = None
+        try:
+            opts = {
+                "dry_run": self.dry_run.get(),
+                "create_tiff": self.create_tiff.get(),
+                "compression": self.compression.get(),
+                "create_heic": self.create_heic.get(),
+                "heic_quality": int(self.heic_qual.get()),
+                "create_jpg": self.create_jpg.get(),
+                "jpg_quality": int(self.jpg_qual.get()),
+                "variant_policy": self.ff_policy.get() if self.ff_enabled.get() else 'none',
+                "variant_smart_archiving": self.ff_smart_archive.get(),
+                "variant_smart_conversion": self.ff_smart_convert.get(),
+                "cancel_event": self.cancel_event,
+            }
+
+            self.log("Process initialized; beginning conversion.")
+            results = process_epson_folder(src, opts, self._update_progress, self.log)
+
+            report_name = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            save_report(results, src / report_name)
+            self.log(f"Report saved: {report_name}")
+            self.log("Complete.")
+
+        except OperationCancelled:
+            cancelled = True
+            self.log("Process cancelled.")
+        except Exception as e:
+            err = str(e)
+            self.log(f"❌ Error: {err}")
+            logger.exception("Worker thread exception")
+        finally:
+            self.root.after(
+                0,
+                lambda: self._finalize_run(
+                    success=(err is None and not cancelled),
+                    cancelled=cancelled,
+                    report_name=report_name,
+                    err=err,
+                ),
+            )
+        # IMPORTANT: no direct widget ops here (worker thread)
 
     def _update_progress(self, val):
         self.root.after(0, lambda: self.progress_val.set(val))
         self.root.after(0, lambda: self.status_var.set(f"Processing: {int(val)}%"))
-
-    def _reset(self):
-        self.is_processing = False
-        self.start_btn.config(state="normal")
-        self.cancel_btn.config(state="disabled")
-        self.status_var.set("Ready")
 
     def _on_close(self):
         if getattr(self, "is_processing", False):

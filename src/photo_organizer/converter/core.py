@@ -6,6 +6,7 @@ import logging
 import shutil
 import time
 import json
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import List, Callable, Dict, Optional
@@ -22,6 +23,10 @@ except ImportError:
     from PIL import Image
 
 from PIL.TiffImagePlugin import IFDRational
+try:
+    from PIL.TiffImagePlugin import ImageFileDirectory_v2
+except Exception:
+    ImageFileDirectory_v2 = None
 
 # Ensure these imports exist in your project structure
 from photo_organizer.converter.variant_selection import group_variants, choose_best_variant, OperationCancelled
@@ -44,80 +49,100 @@ class ConversionResult:
     success: bool
     details: List[OpDetail] = field(default_factory=list)
 
-# Tags Pillow should not be asked to “re-set” because they are computed for the new encoding
+# Exclude tags that are layout/pointers/binary blobs and frequently break scanner TIFF re-save.
 EXCLUDED_TIFF_TAGS = {
-    273,  # StripOffsets
-    278,  # RowsPerStrip
-    279,  # StripByteCounts
-    322, 323, 324, 325,  # TileWidth/Length/Offsets/ByteCounts
-    330,  # SubIFDs
+    # Core image structure / offsets that MUST be regenerated
+    254, 255, 256, 257, 258, 259, 262,
+    273, 277, 278, 279, 284, 322, 323, 324, 325, 330, 338,
+
+    # EXIF/GPS offsets and maker notes blobs
+    34665, 34853, 37500,
+
+    # XMP (often malformed in scanner output)
+    700,
+
+    # PageNumber frequently malformed
+    297,
 }
 
 def _sanitize_tiff_tags(tags) -> dict:
-    """
-    Build a Pillow-acceptable tiffinfo mapping from scanner TIFF tags.
-    Keep only safe tag IDs and simple value types.
-    """
-    safe = {}
     if not tags:
-        return safe
-
-    # tags may be dict-like (tag_v2) or TiffImagePlugin.ImageFileDirectory_v2
-    try:
-        items = tags.items()
-    except Exception:
+        return {}
+    safe = {}
+    # tags may be an IFD-like object; iterate items defensively
+    for k, v in getattr(tags, "items", lambda: [])():
         try:
-            items = list(tags)
-        except Exception:
-            return safe
-
-    for tag_id, value in items:
-        try:
-            tid = int(tag_id)
+            tid = int(k)
         except Exception:
             continue
-
         if tid in EXCLUDED_TIFF_TAGS:
             continue
 
-        v = value
-
-        # skip binary blobs (common in scanner TIFFs; Pillow won't accept in tiffinfo)
-        if isinstance(v, (bytes, bytearray)):
+        # Reject big binary payloads
+        if isinstance(v, (bytes, bytearray, memoryview)):
+            # keep tiny binary (rare) but drop large packets
+            if len(v) > 128:
+                continue
+            safe[tid] = bytes(v)
             continue
 
-        # rationals: convert to float
+        # Normalize rationals
         if isinstance(v, IFDRational):
             safe[tid] = float(v)
             continue
 
-        # primitives
+        # Keep primitive types and small tuples/lists of primitives
         if isinstance(v, (int, float, str)):
+            if isinstance(v, str) and len(v) > 1024:
+                continue
             safe[tid] = v
             continue
 
-        # small sequences of primitives
-        if isinstance(v, (list, tuple)):
-            if len(v) > 64:  # defensive: avoid huge arrays
+        if isinstance(v, (tuple, list)):
+            if len(v) > 16:
                 continue
-            cleaned = []
+            out = []
             ok = True
             for e in v:
                 if isinstance(e, IFDRational):
-                    cleaned.append(float(e))
+                    out.append(float(e))
                 elif isinstance(e, (int, float, str)):
-                    cleaned.append(e)
+                    out.append(e)
                 else:
                     ok = False
                     break
             if ok:
-                safe[tid] = tuple(cleaned)
+                safe[tid] = tuple(out)
             continue
 
-        # anything else: skip
-        continue
-
+        # Drop everything else
     return safe
+
+def _atomic_replace_temp(dest: Path, write_fn: Callable[[Path], None], cancel_event=None):
+    """
+    Write to a temp file in dest.parent then atomically move into place.
+    IMPORTANT: temp file uses dest.suffix so Pillow can infer format if needed.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    fd, tmp = tempfile.mkstemp(
+        prefix=f".{dest.name}.tmp.",
+        suffix=(dest.suffix or ""),
+        dir=str(dest.parent),
+    )
+    os.close(fd)
+    tmp_path = Path(tmp)
+
+    try:
+        if cancel_event is not None and getattr(cancel_event, "is_set", lambda: False)():
+            raise OperationCancelled("Process cancelled by user.")
+        write_fn(tmp_path)
+        os.replace(tmp_path, dest)
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 def _check_cancel(cancel_event):
     """Checks if cancellation was requested and raises exception to stop flow."""
@@ -131,6 +156,7 @@ def process_epson_folder(folder_path: Path, options: dict, progress_callback: Ca
 
     # 1. Extract Options
     dry_run = options.get('dry_run', True)
+    create_tiff = True # Forced by requirements
     compression = options.get('compression', 'deflate')  # 'deflate' (ZIP) or 'lzw'
     create_heic = options.get('create_heic', True)
     heic_quality = options.get('heic_quality', 100)
@@ -221,27 +247,33 @@ def process_epson_folder(folder_path: Path, options: dict, progress_callback: Ca
                 suffix = ".ZIP.TIF" if compression == 'deflate' else ".LZW.TIF"
                 dest_tiff = target_dir / f"{variant.stem}{suffix}"
                 
-                detail = OpDetail(source=variant.name, action=f"TIFF-{compression.upper()}", output=dest_tiff.name, success=False)
-                t0 = time.time()
-                
-                try:
-                    if not dry_run:
-                        _save_tiff(variant, dest_tiff, compression, cancel_event)
-                        detail.size_bytes = dest_tiff.stat().st_size
-                    detail.success = True
+                tiff_success = False
+                if create_tiff:
+                    detail = OpDetail(source=variant.name, action=f"TIFF-{compression.upper()}", output=dest_tiff.name, success=False)
+                    t0 = time.time()
+                    
+                    try:
+                        if not dry_run:
+                            _save_tiff(variant, dest_tiff, compression, cancel_event)
+                            detail.size_bytes = dest_tiff.stat().st_size
+                        detail.success = True
+                        tiff_success = True
+                        variants_processed_successfully.append(variant)
+                    except Exception as e:
+                        detail.error = str(e)
+                        _log(f"  Error (TIFF): {e}")
+                    
+                    detail.duration = round(time.time() - t0, 3)
+                    group_details.append(detail)
+                else:
+                    tiff_success = True
                     variants_processed_successfully.append(variant)
-                except Exception as e:
-                    detail.error = str(e)
-                    _log(f"  Error (TIFF): {e}")
-                
-                detail.duration = round(time.time() - t0, 3)
-                group_details.append(detail)
 
                 # B. Conversions (HEIC/JPG)
                 # Logic: Convert if it's a "Select", a "Backside", or if Smart Conversion is DISABLED
                 should_convert = (variant in selected_fronts) or (variant in backs) or (not ff_smart_convert)
 
-                if should_convert and detail.success:
+                if should_convert and tiff_success:
                     # HEIC
                     if create_heic and HEIF_SAVE_AVAILABLE:
                         h_dest = dirs['heic'] / f"{variant.stem}.heic"
@@ -298,49 +330,41 @@ def process_epson_folder(folder_path: Path, options: dict, progress_callback: Ca
     return results
 
 def _save_tiff(src: Path, dest: Path, algo: str, cancel_event):
-    """
-    Saves TIFF with robust metadata handling.
-    Prevents 'Error setting from dictionary' crashes by sanitizing tags.
-    """
-    _check_cancel(cancel_event)
-    comp = 'tiff_adobe_deflate' if algo == 'deflate' else 'tiff_lzw'
-    
-    # Ensure directory exists before heavy work
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    # Pillow TIFF compression names vary; these are commonly supported:
+    # - "tiff_lzw"
+    # - "tiff_adobe_deflate" (best default; “ZIP-like”)
+    comp = "tiff_adobe_deflate" if algo in ("deflate", "adobe_deflate", "zip") else "tiff_lzw"
 
-    with Image.open(src) as img:
-        _check_cancel(cancel_event)
-        
-        # 1. Attempt to preserve valid tags (TIFF-to-TIFF)
-        try:
-            raw_tags = getattr(img, "tag_v2", None) or getattr(img, "tag", None)
-            tiffinfo = _sanitize_tiff_tags(raw_tags)
-            
-            _check_cancel(cancel_event)
-            if tiffinfo:
-                img.save(dest, compression=comp, tiffinfo=tiffinfo)
-            else:
-                img.save(dest, compression=comp)
-        except OperationCancelled:
-            raise
-        except Exception as e:
-            logger.warning(f"Metadata save failed for {src.name}, falling back to clean save: {e}")
-            # 2. Fallback: Save image data only
-            if img.mode not in ("RGB", "L", "CMYK"):
-                img = img.convert("RGB")
-            _check_cancel(cancel_event)
-            img.save(dest, compression=comp)
+    def _write(tmp_path: Path):
+        with Image.open(src) as img:
+            icc = img.info.get("icc_profile")
+            exif = None
+            try:
+                ex = img.getexif()
+                if ex:
+                    exif = ex.tobytes()
+            except Exception:
+                exif = None
+
+            # Robust default: do not attempt full TIFF tag round-trip
+            img.save(
+                tmp_path,
+                format="TIFF",
+                compression=comp,
+                icc_profile=icc,
+                exif=exif,
+            )
+
+    _atomic_replace_temp(dest, _write, cancel_event=cancel_event)
 
 def _save_image(src, dest, fmt, qual, cancel_event):
-    _check_cancel(cancel_event)
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    def _write(tmp_path: Path):
+        with Image.open(src) as img:
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            img.save(tmp_path, format=fmt, quality=qual)
 
-    with Image.open(src) as img:
-        _check_cancel(cancel_event)
-        if img.mode not in ("RGB", "L"):
-            img = img.convert("RGB")
-        _check_cancel(cancel_event)
-        img.save(dest, format=fmt, quality=qual)
+    _atomic_replace_temp(dest, _write, cancel_event=cancel_event)
 
 def save_report(results: List[ConversionResult], output_path: Path):
     data = {
