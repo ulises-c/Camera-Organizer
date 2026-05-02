@@ -15,7 +15,7 @@ packages = [
 
 [tool.poetry.dependencies]
 python = "^3.12"
-Pillow = "^10.4.0"
+Pillow = "^12.2.0"
 pillow-heif = "^0.13.1"
 exifread = "^3.3.1"
 tqdm = "^4.66.0"
