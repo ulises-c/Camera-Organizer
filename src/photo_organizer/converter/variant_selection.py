@@ -91,19 +91,25 @@ def compute_quality_score(metrics: dict[str, float]) -> float:
     return score
 
 def group_variants(files: list[Path]) -> dict[str, list[Path]]:
-    groups = {}
-    for f in files:
-        # Epson FastFoto naming: "Name.jpg", "Name_a.jpg", "Name_b.jpg"
-        stem = f.stem
-        if stem.lower().endswith('_a') or stem.lower().endswith('_b'):
-            base = stem[:-2]
-        else:
-            base = stem
-        
-        if base not in groups:
-            groups[base] = []
-        groups[base].append(f)
-    return groups
+    """Group FastFoto variants case-insensitively in stable base/_a/_b order."""
+    def rank(path: Path) -> tuple[int, str, str]:
+        stem = path.stem.casefold()
+        variant_rank = 1 if stem.endswith('_a') else 2 if stem.endswith('_b') else 0
+        return variant_rank, path.name.casefold(), path.name
+
+    grouped: dict[str, list[Path]] = {}
+    labels: dict[str, str] = {}
+    for path in sorted(files, key=rank):
+        stem = path.stem
+        base = stem[:-2] if stem.casefold().endswith(('_a', '_b')) else stem
+        key = base.casefold()
+        grouped.setdefault(key, []).append(path)
+        labels.setdefault(key, base)
+
+    return {
+        labels[key]: grouped[key]
+        for key in sorted(grouped, key=lambda item: (labels[item].casefold(), labels[item]))
+    }
 
 def choose_best_variant(
     variants: list[Path], 

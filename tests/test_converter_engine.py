@@ -424,3 +424,31 @@ def test_report_totals_are_derived_from_structured_statuses(tmp_path):
         "failed": 0,
         "cancelled": False,
     }
+
+
+def test_base_variant_policy_archives_augmented_lossless_and_limits_jpeg(tmp_path):
+    source = tmp_path / "scans"
+    source.mkdir()
+    for name in ("photo.tif", "photo_a.tif", "photo_b.tif"):
+        make_tiff(source / name)
+
+    result = run_converter(
+        source,
+        dry_run=True,
+        create_heic=False,
+        create_jpg=True,
+        variant_policy="base",
+        variant_smart_archiving=True,
+        variant_smart_conversion=True,
+    )
+
+    details = result.groups[0].details
+    planned = {(d.source, d.action, d.output) for d in details}
+    assert ("photo.tif", "JPG", "JPG/photo.jpg") in planned
+    assert ("photo_b.tif", "JPG", "JPG/photo_b.jpg") in planned
+    assert not any(d.source == "photo_a.tif" and d.action == "JPG" for d in details)
+    assert (
+        "photo_a.tif",
+        "TIFF-DEFLATE",
+        "lossless_compressed/archive/photo_a.ZIP.TIF",
+    ) in planned
