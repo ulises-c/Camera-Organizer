@@ -267,3 +267,73 @@ def test_lossless_tiff_uses_advertised_codec(tmp_path, compression, suffix, tag)
     with Image.open(output) as converted:
         assert converted.tag_v2[259] == tag
         assert converted.info["dpi"] == pytest.approx((300, 300))
+
+
+def test_requested_heic_without_encoder_is_explicit_failure(tmp_path, monkeypatch):
+    source = tmp_path / "scans"
+    source.mkdir()
+    make_tiff(source / "scan.tif")
+    monkeypatch.setattr(converter_engine, "HEIF_SAVE_AVAILABLE", False)
+
+    result = run_converter(
+        source,
+        dry_run=True,
+        create_heic=True,
+        create_jpg=False,
+        variant_policy="none",
+    )
+
+    assert result.groups[0].success is False
+    heic = next(d for d in result.groups[0].details if d.action == "HEIC")
+    assert heic.status == "failed"
+    assert "unavailable" in heic.error.lower()
+
+
+def test_original_stays_when_any_requested_derivative_fails(tmp_path, monkeypatch):
+    source = tmp_path / "scans"
+    source.mkdir()
+    scan = source / "scan.tif"
+    make_tiff(scan)
+
+    def fail_jpeg(*args, **kwargs):
+        raise OSError("jpeg failed")
+
+    monkeypatch.setattr(converter_engine, "_save_image", fail_jpeg)
+
+    result = run_converter(
+        source,
+        dry_run=False,
+        create_heic=False,
+        create_jpg=True,
+        variant_policy="none",
+    )
+
+    assert scan.is_file()
+    assert (source / "lossless_compressed" / "scan.ZIP.TIF").is_file()
+    assert result.groups[0].success is False
+    assert not any(d.action == "MOVE_ORIGINAL" for d in result.groups[0].details)
+
+
+def test_jpeg_flattens_alpha_on_white_and_preserves_metadata(tmp_path):
+    source = tmp_path / "scans"
+    source.mkdir()
+    image = Image.new("RGBA", (16, 16), (255, 0, 0, 0))
+    exif = Image.Exif()
+    exif[270] = "scanner description"
+    image.save(source / "scan.tif", format="TIFF", dpi=(300, 300), exif=exif)
+
+    result = run_converter(
+        source,
+        dry_run=False,
+        create_heic=False,
+        create_jpg=True,
+        jpg_quality=95,
+        variant_policy="none",
+    )
+
+    assert result.groups[0].success is True
+    with Image.open(source / "JPG" / "scan.jpg") as converted:
+        red, green, blue = converted.getpixel((0, 0))
+        assert min(red, green, blue) > 240
+        assert converted.info["dpi"] == pytest.approx((300, 300), abs=1)
+        assert converted.getexif()[270] == "scanner description"

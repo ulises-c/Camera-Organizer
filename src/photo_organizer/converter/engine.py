@@ -311,7 +311,8 @@ def process_epson_folder(folder_path: Path, options: dict,
             # 5. Process Files
             for variant in all_process_candidates:
                 _check_cancel(cancel_event)
-                
+                variant_detail_start = len(group_details)
+
                 # A. Mandatory Lossless TIFF
                 is_rejected = (variant in rejected_fronts)
                 
@@ -350,13 +351,11 @@ def process_epson_folder(folder_path: Path, options: dict,
                             _log(f"  Skip existing output: {detail.output}")
                         elif dry_run:
                             tiff_success = True
-                            variants_processed_successfully.append(variant)
                         else:
                             _save_tiff(variant, dest_tiff, compression, cancel_event)
                             detail.size_bytes = dest_tiff.stat().st_size
                             detail.status = "written"
                             tiff_success = True
-                            variants_processed_successfully.append(variant)
                     except OperationCancelled:
                         detail.status = "cancelled"
                         raise
@@ -369,15 +368,15 @@ def process_epson_folder(folder_path: Path, options: dict,
                     group_details.append(detail)
                 else:
                     tiff_success = True
-                    variants_processed_successfully.append(variant)
 
                 # B. Conversions (HEIC/JPG)
                 # Logic: Convert if it's a "Select", a "Backside", or if Smart Conversion is DISABLED
                 should_convert = (variant in selected_fronts) or (variant in backs) or (not ff_smart_convert)
 
                 if should_convert and tiff_success:
-                    # HEIC
-                    if create_heic and HEIF_SAVE_AVAILABLE:
+                    # HEIC (lossy). A requested but unavailable encoder is a
+                    # visible failure in preview as well as live mode.
+                    if create_heic:
                         h_dest = dirs['heic'] / f"{variant.stem}.heic"
                         h_det = OpDetail(
                             source=variant.name,
@@ -386,17 +385,26 @@ def process_epson_folder(folder_path: Path, options: dict,
                             status="planned" if dry_run else "pending",
                         )
                         t0 = time.time()
-                        try:
-                            if not dry_run:
-                                _save_image(variant, h_dest, "HEIF", heic_quality, cancel_event)
-                                h_det.size_bytes = h_dest.stat().st_size
-                                h_det.status = "written"
-                        except OperationCancelled:
-                            h_det.status = "cancelled"
-                            raise
-                        except Exception as e:
+                        if not HEIF_SAVE_AVAILABLE:
                             h_det.status = "failed"
-                            h_det.error = str(e)
+                            h_det.error = "HEIC encoder unavailable"
+                        else:
+                            try:
+                                if h_dest.exists():
+                                    h_det.status = "skipped_collision"
+                                elif not dry_run:
+                                    _save_image(
+                                        variant, h_dest, "HEIF", heic_quality,
+                                        cancel_event
+                                    )
+                                    h_det.size_bytes = h_dest.stat().st_size
+                                    h_det.status = "written"
+                            except OperationCancelled:
+                                h_det.status = "cancelled"
+                                raise
+                            except Exception as e:
+                                h_det.status = "failed"
+                                h_det.error = str(e)
                         h_det.duration = round(time.time() - t0, 3)
                         group_details.append(h_det)
                     
@@ -411,7 +419,9 @@ def process_epson_folder(folder_path: Path, options: dict,
                         )
                         t0 = time.time()
                         try:
-                            if not dry_run:
+                            if j_dest.exists():
+                                j_det.status = "skipped_collision"
+                            elif not dry_run:
                                 _save_image(variant, j_dest, "JPEG", jpg_quality, cancel_event)
                                 j_det.size_bytes = j_dest.stat().st_size
                                 j_det.status = "written"
@@ -423,6 +433,12 @@ def process_epson_folder(folder_path: Path, options: dict,
                             j_det.error = str(e)
                         j_det.duration = round(time.time() - t0, 3)
                         group_details.append(j_det)
+
+                variant_details = group_details[variant_detail_start:]
+                if tiff_success and variant_details and all(
+                    detail.success for detail in variant_details
+                ):
+                    variants_processed_successfully.append(variant)
 
             # 6. Move Originals
             if not dry_run:
@@ -499,9 +515,28 @@ def _save_tiff(src: Path, dest: Path, algo: str, cancel_event):
 def _save_image(src, dest, fmt, qual, cancel_event):
     def _write(tmp_path: Path):
         with Image.open(src) as img:
-            if img.mode not in ("RGB", "L"):
+            info = dict(img.info)
+            exif = img.getexif()
+            exif_bytes = exif.tobytes() if exif else None
+
+            if "A" in img.getbands():
+                rgba = img.convert("RGBA")
+                converted = Image.new("RGB", rgba.size, "white")
+                converted.paste(rgba.convert("RGB"), mask=rgba.getchannel("A"))
+                img = converted
+            elif img.mode not in ("RGB", "L"):
                 img = img.convert("RGB")
-            img.save(tmp_path, format=fmt, quality=qual)
+
+            save_kwargs = {"format": fmt, "quality": qual}
+            if exif_bytes:
+                save_kwargs["exif"] = exif_bytes
+            for key in ("icc_profile", "dpi"):
+                if info.get(key) is not None:
+                    save_kwargs[key] = info[key]
+            img.save(tmp_path, **save_kwargs)
+
+        with Image.open(tmp_path) as check:
+            check.verify()
 
     _atomic_replace_temp(dest, _write, cancel_event=cancel_event)
 
