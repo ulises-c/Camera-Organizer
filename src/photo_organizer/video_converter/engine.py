@@ -133,10 +133,15 @@ def build_stage1_cmd(clip: Clip, dest: Path, lut: LutChoice | None,
 
 def build_stage2_cmd(src: Path, dest: Path, opts: dict) -> list[str]:
     h = int(opts["share_height"])
+    # Orientation-aware: pin the SHORT edge to the target (1080) so landscape
+    # footage becomes 1920x1080 and portrait footage becomes 1080x1920 — a plain
+    # downscale with no cropping either way. (A fixed scale=-2:1080 would shrink
+    # a vertical clip to ~608x1080, which is soft on full-screen phone playback.)
+    vf = (f"scale=w='if(gt(iw,ih),-2,{h})':h='if(gt(iw,ih),{h},-2)':flags=lanczos")
     return [
         ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-y",
         "-i", str(src),
-        "-vf", f"scale=-2:{h}:flags=lanczos",
+        "-vf", vf,
         "-c:v", "libx265", "-preset", opts["x265_preset"], "-crf", str(opts["x265_crf"]),
         "-maxrate", opts["x265_maxrate"], "-bufsize", opts["x265_bufsize"],
         "-pix_fmt", "yuv420p10le",
