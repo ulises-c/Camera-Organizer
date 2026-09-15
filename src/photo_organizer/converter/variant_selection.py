@@ -2,25 +2,22 @@
 Variant selection logic for Epson FastFoto scans.
 Handles _a (augmented) and _b (backside) file variants.
 """
-import math
 import logging
+import math
 from pathlib import Path
-from typing import List, Tuple, Dict, Optional
-from PIL import Image
+
 import numpy as np
+from PIL import Image
+
+from photo_organizer.engine import OperationCancelled
+from photo_organizer.engine import check_cancel as _shared_check_cancel
 
 logger = logging.getLogger(__name__)
 
-# Cancellation Exception
-class OperationCancelled(Exception):
-    """Raised when the user requests cancellation."""
-    pass
-
 def check_cancel(cancel_event):
-    if cancel_event and cancel_event.is_set():
-        raise OperationCancelled("Operation cancelled by user")
+    _shared_check_cancel(cancel_event)
 
-def compute_quality_metrics(image_path: Path, cancel_event=None) -> Dict[str, float]:
+def compute_quality_metrics(image_path: Path, cancel_event=None) -> dict[str, float]:
     """
     Compute quality metrics. Checks for cancellation before heavy steps.
     """
@@ -83,7 +80,7 @@ def compute_quality_metrics(image_path: Path, cancel_event=None) -> Dict[str, fl
         logger.warning(f"Failed to compute metrics for {image_path}: {e}")
         return {'sharpness': 0.0, 'score': 0.0}
 
-def compute_quality_score(metrics: Dict[str, float]) -> float:
+def compute_quality_score(metrics: dict[str, float]) -> float:
     # Weighted score
     score = (
         metrics.get('sharpness', 0) * 1.0 +
@@ -93,14 +90,12 @@ def compute_quality_score(metrics: Dict[str, float]) -> float:
     )
     return score
 
-def group_variants(files: List[Path]) -> Dict[str, List[Path]]:
+def group_variants(files: list[Path]) -> dict[str, list[Path]]:
     groups = {}
     for f in files:
         # Epson FastFoto naming: "Name.jpg", "Name_a.jpg", "Name_b.jpg"
         stem = f.stem
-        if stem.lower().endswith('_a'):
-            base = stem[:-2]
-        elif stem.lower().endswith('_b'):
+        if stem.lower().endswith('_a') or stem.lower().endswith('_b'):
             base = stem[:-2]
         else:
             base = stem
@@ -111,10 +106,10 @@ def group_variants(files: List[Path]) -> Dict[str, List[Path]]:
     return groups
 
 def choose_best_variant(
-    variants: List[Path], 
+    variants: list[Path], 
     policy: str = 'auto', 
     cancel_event = None
-) -> Tuple[Path, Dict]:
+) -> tuple[Path, dict]:
     """
     Selects the best variant. Raises OperationCancelled if interrupted.
     """

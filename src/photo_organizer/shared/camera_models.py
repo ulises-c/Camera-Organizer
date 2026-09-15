@@ -4,8 +4,8 @@ Maps EXIF model names to friendly display names with alias support.
 """
 import json
 from pathlib import Path
-import appdirs
 
+import appdirs
 
 APP_NAME = "photo_organizer"
 APP_AUTHOR = "PhotoOrganizerProject"  # Generic, not user-specific
