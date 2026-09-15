@@ -192,3 +192,6 @@ old/
 examples/*.tif
 examples/*.jpg
 examples/*.heic
+# Agent tooling (Hermes session state)
+.railguard/
+.hermes/
