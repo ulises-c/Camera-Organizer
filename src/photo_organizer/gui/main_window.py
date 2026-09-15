@@ -31,6 +31,7 @@ from photo_organizer.engine import TOOLS, ToolSpec
 from photo_organizer.gui.panels.batch_renamer import BatchRenamerPanel
 from photo_organizer.gui.panels.folder_renamer import FolderRenamerPanel
 from photo_organizer.gui.panels.organizer import OrganizerPanel
+from photo_organizer.gui.panels.video_converter import VideoConverterPanel
 
 
 class StubPanel(QFrame):
@@ -63,6 +64,8 @@ def make_panel(spec: ToolSpec) -> QWidget:
     """Build a migrated panel when available, otherwise an explicit stub."""
     if spec.key == "organizer":
         return OrganizerPanel()
+    if spec.key == "video_converter":
+        return VideoConverterPanel()
     if spec.key == "folder_renamer":
         return FolderRenamerPanel()
     if spec.key == "batch_renamer":
