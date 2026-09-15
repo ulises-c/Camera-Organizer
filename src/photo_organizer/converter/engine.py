@@ -2,20 +2,20 @@
 TIFF Converter Core - Professional Workflow
 Handles parallel processing, smart archiving, and multi-format output.
 """
-import logging
-import shutil
-import time
 import json
+import logging
+import os
+import shutil
 import tempfile
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Callable, Dict, Optional
-from dataclasses import dataclass, field, asdict
-import os
 
 try:
-    from PIL import Image
     import pillow_heif
+    from PIL import Image
     pillow_heif.register_heif_opener()
     HEIF_SAVE_AVAILABLE = True
 except ImportError:
@@ -23,13 +23,18 @@ except ImportError:
     from PIL import Image
 
 from PIL.TiffImagePlugin import IFDRational
+
 try:
     from PIL.TiffImagePlugin import ImageFileDirectory_v2
 except Exception:
     ImageFileDirectory_v2 = None
 
 # Ensure these imports exist in your project structure
-from photo_organizer.converter.variant_selection import group_variants, choose_best_variant, OperationCancelled
+from photo_organizer.converter.variant_selection import (
+    OperationCancelled,
+    choose_best_variant,
+    group_variants,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +52,7 @@ class OpDetail:
 class ConversionResult:
     source_stem: str
     success: bool
-    details: List[OpDetail] = field(default_factory=list)
+    details: list[OpDetail] = field(default_factory=list)
 
 # Exclude tags that are layout/pointers/binary blobs and frequently break scanner TIFF re-save.
 EXCLUDED_TIFF_TAGS = {
@@ -70,7 +75,7 @@ def _sanitize_tiff_tags(tags) -> dict:
         return {}
     safe = {}
     # tags may be an IFD-like object; iterate items defensively
-    for k, v in getattr(tags, "items", lambda: [])():
+    for k, v in getattr(tags, "items", list)():
         try:
             tid = int(k)
         except Exception:
@@ -149,7 +154,7 @@ def _check_cancel(cancel_event):
     if cancel_event and cancel_event.is_set():
         raise OperationCancelled("Process cancelled by user.")
 
-def process_epson_folder(folder_path: Path, options: dict, progress_callback: Callable, log_callback: Callable) -> List[ConversionResult]:
+def process_epson_folder(folder_path: Path, options: dict, progress_callback: Callable, log_callback: Callable) -> list[ConversionResult]:
     def _log(msg):
         if log_callback: log_callback(msg)
         else: logger.info(msg)
@@ -366,7 +371,7 @@ def _save_image(src, dest, fmt, qual, cancel_event):
 
     _atomic_replace_temp(dest, _write, cancel_event=cancel_event)
 
-def save_report(results: List[ConversionResult], output_path: Path):
+def save_report(results: list[ConversionResult], output_path: Path):
     data = {
         "timestamp": datetime.now().isoformat(),
         "summary": {
