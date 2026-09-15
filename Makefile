@@ -33,7 +33,7 @@ video-run:
 	@uv run python -m photo_organizer.video_converter.cli "$(DIR)" --run
 
 lint:
-	@uv run ruff check src
+	@uv run ruff check src tests
 
 test:
 	@uv run pytest -q

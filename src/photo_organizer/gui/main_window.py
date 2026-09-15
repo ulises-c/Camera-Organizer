@@ -1,16 +1,15 @@
 """Main application window (PySide6).
 
 Replaces the old subprocess-launching tkinter `launcher.py`. One window, a tool
-list on the left, and a panel area on the right. Because the GUI is intentionally
-deferred, each tool currently shows a *stub* panel that documents its engine and
-options; the engines themselves are complete and callable (CLI / tests).
+list on the left, and a panel area on the right. Tool panels are migrated one at
+a time; completed panels run engines through `EngineWorker`, while unfinished
+tools keep an explicit stub.
 
-When a panel is built for real, it will:
-  1. take a source folder,
-  2. build the options dict,
-  3. spawn an EngineWorker(spec.load_engine(), source, options),
-  4. wire progress/message/finished to widgets.
-The plumbing (worker, registry, engines) is already in place.
+Each real panel:
+  1. takes a source folder,
+  2. builds the options dict,
+  3. spawns an EngineWorker(engine, source, options),
+  4. wires progress/message/result signals to widgets.
 """
 from __future__ import annotations
 
@@ -29,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from photo_organizer.engine import TOOLS, ToolSpec
+from photo_organizer.gui.panels.batch_renamer import BatchRenamerPanel
 
 
 class StubPanel(QFrame):
@@ -57,6 +57,13 @@ class StubPanel(QFrame):
         layout.addStretch(1)
 
 
+def make_panel(spec: ToolSpec) -> QWidget:
+    """Build a migrated panel when available, otherwise an explicit stub."""
+    if spec.key == "batch_renamer":
+        return BatchRenamerPanel()
+    return StubPanel(spec)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -69,7 +76,7 @@ class MainWindow(QMainWindow):
 
         # Left: tool list.
         self.tool_list = QListWidget()
-        self.tool_list.setMaximumWidth(260)
+        self.tool_list.setMaximumWidth(230)
         for spec in TOOLS:
             item = QListWidgetItem(spec.name)
             item.setData(Qt.UserRole, spec.key)
@@ -80,7 +87,7 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         root.addWidget(self.stack, 1)
         for spec in TOOLS:
-            self.stack.addWidget(StubPanel(spec))
+            self.stack.addWidget(make_panel(spec))
 
         self.tool_list.currentRowChanged.connect(self.stack.setCurrentIndex)
         self.tool_list.setCurrentRow(0)

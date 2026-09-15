@@ -4,11 +4,11 @@ Wraps an EngineCallable in a QThread, marshalling the engine's `progress_callbac
 and `log_callback` into Qt signals (safe to connect to widgets). Cancellation is
 cooperative: `cancel()` sets the shared token the engines poll via check_cancel.
 
-Usage (from a future panel):
+Usage (from a panel):
     worker = EngineWorker(spec.load_engine(), source, options)
     worker.progress.connect(bar.setValue)
     worker.message.connect(log.appendPlainText)
-    worker.finished.connect(on_done)
+    worker.result_ready.connect(on_done)
     worker.start()
     ...
     worker.cancel()
@@ -26,7 +26,7 @@ from photo_organizer.engine import OperationCancelled, make_cancel_token
 class EngineWorker(QThread):
     progress = Signal(float)          # 0–100
     message = Signal(str)             # log line
-    finished = Signal(object)         # engine return value (result object)
+    result_ready = Signal(object)     # engine return value (result object)
     failed = Signal(str)              # error string (non-cancel exceptions)
     cancelled = Signal()
 
@@ -52,7 +52,7 @@ class EngineWorker(QThread):
             )
             if self._cancel_token.is_set():
                 self.cancelled.emit()
-            self.finished.emit(result)
+            self.result_ready.emit(result)
         except OperationCancelled:
             self.cancelled.emit()
         except Exception as e:

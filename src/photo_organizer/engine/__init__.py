@@ -22,7 +22,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class OperationCancelled(Exception):
@@ -44,7 +44,7 @@ def check_cancel(cancel_event: CancelToken | None) -> None:
 class EngineCallable(Protocol):
     def __call__(self, source, options: dict,
                  progress_callback: Callable[[float], None],
-                 log_callback: Callable[[str], None]) -> list: ...
+                 log_callback: Callable[[str], None]) -> Any: ...
 
 
 @dataclass

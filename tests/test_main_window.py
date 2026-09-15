@@ -1,0 +1,13 @@
+"""Tests for the PySide6 application shell."""
+from __future__ import annotations
+
+from photo_organizer.engine import TOOLS
+from photo_organizer.gui.main_window import MainWindow
+from photo_organizer.gui.panels.batch_renamer import BatchRenamerPanel
+
+
+def test_main_window_uses_real_batch_renamer_panel(qapp):
+    window = MainWindow()
+    index = next(i for i, spec in enumerate(TOOLS) if spec.key == "batch_renamer")
+
+    assert isinstance(window.stack.widget(index), BatchRenamerPanel)

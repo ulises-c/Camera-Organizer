@@ -1,1 +1,1 @@
-"""GUI package (PySide6). Deferred: shell + stub panels + reusable worker."""
+"""PySide6 GUI package: app shell, tool panels, and reusable worker."""
