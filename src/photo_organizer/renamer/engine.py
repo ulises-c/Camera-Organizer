@@ -80,6 +80,15 @@ def process_batch_rename(source, options: dict,
             if "UnknownCamera" in name:
                 matches.append((root, name, os.path.isdir(os.path.join(root, name))))
 
+    # Rename files before directories, then directories deepest-first. Renaming a
+    # parent directory first would invalidate every collected child path.
+    matches.sort(
+        key=lambda match: (
+            match[2],
+            -len(Path(match[0], match[1]).parts),
+        )
+    )
+
     total = len(matches)
     if total == 0:
         _log("No names containing 'UnknownCamera' found.")
