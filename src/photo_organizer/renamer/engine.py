@@ -281,6 +281,10 @@ def process_folder_rename(source, options: dict,
         if count:
             _log(f"  skip ({status}): {count}")
 
+    # A parent rename invalidates every child path collected beneath it, so
+    # execute nested candidates deepest-first. Lexical ordering keeps ties stable.
+    plan.sort(key=lambda item: (-len(Path(item[0]).parts), item[0]))
+
     total = len(plan)
     if total == 0:
         _log("Nothing to process.")
