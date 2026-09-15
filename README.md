@@ -53,9 +53,9 @@ make run
 ```
 
 `make run` launches the unified PySide6 application. The Photo & Video
-Organizer, Folder Renamer, and Batch Renamer are fully migrated; TIFF Converter
-and Video Converter currently show migration stubs while their UI-agnostic
-engines remain available.
+Organizer, Folder Renamer, Batch Renamer, and Video Converter are fully
+migrated; only the TIFF Converter still shows a migration stub while its
+UI-agnostic engine remains available.
 
 ## Development Commands
 
@@ -85,7 +85,13 @@ existing or already-organized destinations are skipped) and can target a
 separate destination folder. Folder merges must be enabled explicitly;
 conflicts receive a `_dupN` suffix rather than overwriting existing files.
 
-### Video converter CLI
+### Video converter
+
+The **Video Converter** panel drives the same engine from the GUI (footage
+folder, LUT auto-detect or explicit pick, stage toggles, share height, x265 CRF
+and preset), defaulting to **Preview only**. A live run needs `ffmpeg`/`ffprobe`
+on PATH and encodes into `01_rec709_master/` and `02_share_1080p/` subfolders;
+existing outputs are skipped rather than overwritten. The CLI remains available:
 
 ```bash
 # Plan only (default)
@@ -107,7 +113,8 @@ src/photo_organizer/
 │   └── panels/
 │       ├── organizer.py         # Metadata-based date/camera-model sorting
 │       ├── batch_renamer.py     # UnknownCamera file/folder renaming
-│       └── folder_renamer.py    # Metadata-based camera-folder renaming
+│       ├── folder_renamer.py    # Metadata-based camera-folder renaming
+│       └── video_converter.py   # Log→Rec709 + 1080p HEVC share encode
 ├── organizer/engine.py          # Photo/video organization logic
 ├── renamer/engine.py            # Batch and folder rename logic
 ├── converter/engine.py          # TIFF/Epson conversion logic

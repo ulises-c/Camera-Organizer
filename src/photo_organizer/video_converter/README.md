@@ -53,9 +53,11 @@ Existing outputs are skipped, so runs are resumable.
 
 ## GUI status
 
-The unified PySide6 shell discovers this engine through `engine.TOOLS`; its
-full video panel is still pending. That panel will call
-`engine.process_video_folder(folder, options, progress_cb, log_cb)` through the
-shared `EngineWorker`. Planned controls include source selection, per-clip
-Log/Rec709 badges, LUT selection (`luts.catalog()`), CRF/height, preview mode,
-progress, logs, and cooperative cancellation.
+The unified PySide6 shell discovers this engine through `engine.TOOLS`, and the
+**Video Converter** panel (`gui/panels/video_converter.py`) is fully wired: it
+calls `engine.process_video_folder(folder, options, progress_cb, log_cb)` through
+the shared `EngineWorker`. Controls include the footage folder, LUT auto-detect or
+explicit override (`luts.catalog()`), per-stage toggles, share height, x265 CRF
+and preset, preview mode (default), progress, logs, and cooperative cancellation.
+Preview builds the plan without requiring `ffmpeg`; live runs are gated behind an
+`ffmpeg_available()` check and a confirmation dialog.
