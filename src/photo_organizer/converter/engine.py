@@ -457,30 +457,42 @@ def process_epson_folder(folder_path: Path, options: dict,
     return run_result
 
 def _save_tiff(src: Path, dest: Path, algo: str, cancel_event):
-    # Pillow TIFF compression names vary; these are commonly supported:
-    # - "tiff_lzw"
-    # - "tiff_adobe_deflate" (best default; “ZIP-like”)
-    comp = "tiff_adobe_deflate" if algo in ("deflate", "adobe_deflate", "zip") else "tiff_lzw"
+    comp = "tiff_adobe_deflate" if algo == "deflate" else "tiff_lzw"
 
     def _write(tmp_path: Path):
         with Image.open(src) as img:
-            icc = img.info.get("icc_profile")
-            exif = None
-            try:
-                ex = img.getexif()
-                if ex:
-                    exif = ex.tobytes()
-            except Exception:
-                exif = None
+            frames = []
+            expected = []
+            frame_count = getattr(img, "n_frames", 1)
+            for index in range(frame_count):
+                _check_cancel(cancel_event)
+                img.seek(index)
+                frame = img.copy()
+                frames.append(frame)
+                expected.append((frame.size, frame.mode, frame.getpixel((0, 0))))
 
-            # Robust default: do not attempt full TIFF tag round-trip
-            img.save(
-                tmp_path,
-                format="TIFF",
-                compression=comp,
-                icc_profile=icc,
-                exif=exif,
-            )
+            info = dict(img.info)
+            save_kwargs = {
+                "format": "TIFF",
+                "compression": comp,
+                "save_all": len(frames) > 1,
+                "append_images": frames[1:],
+            }
+            for key in ("icc_profile", "dpi", "exif"):
+                if info.get(key) is not None:
+                    save_kwargs[key] = info[key]
+            frames[0].save(tmp_path, **save_kwargs)
+
+        # Reopen and validate every page before the temp file is publishable.
+        with Image.open(tmp_path) as check:
+            if getattr(check, "n_frames", 1) != len(expected):
+                raise RuntimeError("TIFF verification failed: page count changed")
+            for index, (size, mode, sample_pixel) in enumerate(expected):
+                check.seek(index)
+                if check.size != size or check.mode != mode:
+                    raise RuntimeError("TIFF verification failed: dimensions or mode changed")
+                if check.getpixel((0, 0)) != sample_pixel:
+                    raise RuntimeError("TIFF verification failed: pixel data changed")
 
     _atomic_replace_temp(dest, _write, cancel_event=cancel_event)
 

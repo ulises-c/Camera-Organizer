@@ -218,3 +218,52 @@ def test_live_tiff_only_creates_only_required_directories(tmp_path):
     assert not (source / "lossless_compressed" / "archive").exists()
     assert not (source / "HEIC").exists()
     assert not (source / "JPG").exists()
+
+
+def test_lossless_tiff_preserves_all_pages_and_pixels(tmp_path):
+    source = tmp_path / "scans"
+    source.mkdir()
+    scan = source / "book.tif"
+    make_tiff(scan, color=(20, 40, 60), frames=2)
+
+    result = run_converter(
+        source,
+        dry_run=False,
+        create_heic=False,
+        create_jpg=False,
+        variant_policy="none",
+    )
+
+    output = source / "lossless_compressed" / "book.ZIP.TIF"
+    assert result.groups[0].success is True
+    with Image.open(output) as image:
+        assert image.n_frames == 2
+        image.seek(0)
+        assert image.getpixel((0, 0)) == (20, 40, 60)
+        image.seek(1)
+        assert image.getpixel((0, 0)) == (21, 40, 60)
+
+
+@pytest.mark.parametrize(("compression", "suffix", "tag"), [
+    ("deflate", ".ZIP.TIF", 8),
+    ("lzw", ".LZW.TIF", 5),
+])
+def test_lossless_tiff_uses_advertised_codec(tmp_path, compression, suffix, tag):
+    source = tmp_path / "scans"
+    source.mkdir()
+    image = Image.new("RGB", (8, 6), "navy")
+    image.save(source / "scan.tif", format="TIFF", dpi=(300, 300))
+
+    run_converter(
+        source,
+        dry_run=False,
+        compression=compression,
+        create_heic=False,
+        create_jpg=False,
+        variant_policy="none",
+    )
+
+    output = source / "lossless_compressed" / f"scan{suffix}"
+    with Image.open(output) as converted:
+        assert converted.tag_v2[259] == tag
+        assert converted.info["dpi"] == pytest.approx((300, 300))
