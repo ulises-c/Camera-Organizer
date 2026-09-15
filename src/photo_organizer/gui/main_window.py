@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from photo_organizer.engine import TOOLS, ToolSpec
 from photo_organizer.gui.panels.batch_renamer import BatchRenamerPanel
+from photo_organizer.gui.panels.folder_renamer import FolderRenamerPanel
 
 
 class StubPanel(QFrame):
@@ -59,6 +60,8 @@ class StubPanel(QFrame):
 
 def make_panel(spec: ToolSpec) -> QWidget:
     """Build a migrated panel when available, otherwise an explicit stub."""
+    if spec.key == "folder_renamer":
+        return FolderRenamerPanel()
     if spec.key == "batch_renamer":
         return BatchRenamerPanel()
     return StubPanel(spec)
