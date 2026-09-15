@@ -6,7 +6,7 @@ drive any of them:
 
     def run(source: Path, options: dict,
             progress_callback: Callable[[float], None],
-            log_callback: Callable[[str], None]) -> list: ...
+            log_callback: Callable[[str], None]) -> ResultObject: ...
 
 - `options` is a plain dict; a cancellation token lives under options["cancel_event"].
 - `progress_callback` receives a 0–100 float.

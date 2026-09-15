@@ -6,6 +6,19 @@ Adds dry-run, cancellation, and progress reporting the original lacked.
 
 Sorts files into date / camera-model folder structures. Video sidecar files
 (.XML/.THM/.LRV) follow their parent .MP4's destination.
+
+Safety contract:
+- Moves never overwrite: an existing destination, an already-organized file
+  (source == destination), or a destination already reserved earlier in the
+  same run is reported as ``skipped`` rather than moved.
+- Untrusted metadata (camera model, derived date) is reduced to a single safe
+  path segment, so a malicious/garbled value cannot escape the destination root.
+- ``options["destination"]`` targets a separate output root (defaults to the
+  source); ``options["recursive"]`` toggles subfolder traversal.
+- Camera-model persistence happens only for successfully moved files, never in
+  preview, and a persistence failure is recorded in ``result.database_error``
+  without failing the (already completed) moves.
+- Cancellation is acknowledged truthfully via ``result.cancelled``.
 """
 from __future__ import annotations
 

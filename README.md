@@ -6,10 +6,12 @@ A comprehensive toolkit for organizing photos, videos, and scans. Includes multi
 
 ### 📸 Photo & Video Organizer
 
-- Sort files by date and camera model
-- Support for photos (.HIF, .ARW, .JPG) and videos (.MP4, .MOV)
-- Flexible organization options (by camera, by date, separate media types)
-- Automatic camera model detection and database management
+- Sort files into date and camera-model folders derived from metadata
+- Support for photos (.HIF, .ARW, .JPG) and videos (.MP4, .MOV) plus sidecars
+- Optional separate source and destination folders, and optional recursion
+- Flexible layout options (by camera, append model to date folders, separate media types)
+- Never overwrites: existing and already-organized destinations are skipped
+- Camera-model database updates only after successful live moves
 
 ### 📁 Folder Renamer
 
@@ -50,9 +52,10 @@ make sync
 make run
 ```
 
-`make run` launches the unified PySide6 application. The Folder Renamer and
-Batch Renamer are fully migrated; Organizer, TIFF Converter, and Video Converter
-currently show migration stubs while their UI-agnostic engines remain available.
+`make run` launches the unified PySide6 application. The Photo & Video
+Organizer, Folder Renamer, and Batch Renamer are fully migrated; TIFF Converter
+and Video Converter currently show migration stubs while their UI-agnostic
+engines remain available.
 
 ## Development Commands
 
@@ -75,10 +78,12 @@ make run
 uv run camera-organizer
 ```
 
-Both renamer panels default to **Preview only**, so their first run does not
-change files. Clear that option and confirm the warning dialog to perform live
-renames. Folder merges must also be enabled explicitly; conflicts receive a
-`_dupN` suffix rather than overwriting existing files.
+Both renamer panels and the Organizer default to **Preview only**, so their
+first run does not change files. Clear that option and confirm the warning
+dialog to perform live changes. The Organizer moves files (never overwriting:
+existing or already-organized destinations are skipped) and can target a
+separate destination folder. Folder merges must be enabled explicitly;
+conflicts receive a `_dupN` suffix rather than overwriting existing files.
 
 ### Video converter CLI
 
@@ -100,6 +105,7 @@ src/photo_organizer/
 │   ├── main_window.py           # Unified window and panel routing
 │   ├── worker.py                # Reusable background QThread
 │   └── panels/
+│       ├── organizer.py         # Metadata-based date/camera-model sorting
 │       ├── batch_renamer.py     # UnknownCamera file/folder renaming
 │       └── folder_renamer.py    # Metadata-based camera-folder renaming
 ├── organizer/engine.py          # Photo/video organization logic
@@ -117,7 +123,8 @@ The application maintains a user-writable camera models database using `appdirs`
 - **macOS**: `~/Library/Application Support/photo_organizer/camera_models.json`
 - **Linux**: `~/.local/share/photo_organizer/camera_models.json`
 
-New camera models are automatically added when detected during organization.
+New camera models are added to the database only after a successful live
+organize move (never during preview).
 
 ## Supported File Types
 
@@ -125,7 +132,7 @@ New camera models are automatically added when detected during organization.
 
 - `.HIF` - High Efficiency Image Format
 - `.ARW` - Sony RAW
-- `.JPG` / `.JPEG` - JPEG images
+- `.JPG` - JPEG images
 
 ### Videos
 

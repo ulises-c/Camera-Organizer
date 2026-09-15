@@ -30,23 +30,37 @@ def run(source, options: dict,
 ```
 
 - Cancellation token lives at `options["cancel_event"]`; engines poll it with
-  `engine.check_cancel(...)` and raise `OperationCancelled`.
+  `engine.check_cancel(...)` (raising `OperationCancelled`) or a direct
+  `is_set()` check for soft unwinding. A result object may carry a `cancelled`
+  flag: the worker reports cancellation from that flag when present, and only
+  falls back to the requested token when the result is silent — so an engine
+  that ignores the token and finishes is never reported as cancelled.
 - `options["dry_run"]` defaults to **True** everywhere — nothing mutates disk
   until explicitly turned off.
 - Engines never import Qt or tkinter. They print nothing; they call callbacks.
+- Result objects expose structured per-item status (e.g. the Organizer's
+  `planned` / `moved` / `skipped_already_organized` / `skipped_collision` /
+  `failed`) and truthful totals so preview and live runs are unambiguous.
+- Destinations derived from untrusted metadata are reduced to single safe path
+  segments; moves never overwrite and never escape the destination root.
+
 
 The GUI discovers tools through `engine.TOOLS` (a list of `ToolSpec`) and loads
-each engine lazily via `ToolSpec.load_engine()` — so adding a tool is one entry
-in the registry, no wiring.
+each engine lazily via `ToolSpec.load_engine()`. Registering a tool is one entry
+in `TOOLS`; wiring a *real* panel is an explicit routing branch in
+`make_panel()` (the default is the shared `StubPanel`).
 
 ## GUI status: migration in progress
 
-`main_window.py` provides the unified application shell. The **Folder Renamer**
-and **Batch Renamer** are complete panels with preview-safe defaults, live-run
-confirmation, progress, logs, structured results, and cooperative cancellation.
-Folder Renamer additionally exposes recursive discovery, optional camera-model
-suffixes, and explicit non-overwriting merges. Organizer, TIFF Converter, and
-Video Converter still show stubs while their engines remain usable.
+`main_window.py` provides the unified application shell. The **Photo & Video
+Organizer**, **Folder Renamer**, and **Batch Renamer** are complete panels with
+preview-safe defaults, live-run confirmation, progress, logs, structured
+results, and cooperative cancellation. Organizer adds a separate destination
+folder, optional recursion, non-overwriting collision skips, truthful partial
+cancellation, and camera-model persistence limited to successful live moves.
+Folder Renamer adds recursive discovery, optional camera-model suffixes, and
+explicit non-overwriting merges. TIFF Converter and Video Converter still show
+stubs while their engines remain usable.
 
 Adding the next real panel means wiring its source/options controls to an
 `EngineWorker`; processing decisions stay in the engine.
