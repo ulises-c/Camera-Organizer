@@ -1,13 +1,14 @@
 """Safety and fidelity tests for the TIFF/Epson converter engine."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 from PIL import Image
 
 from photo_organizer.converter import engine as converter_engine
-from photo_organizer.converter.engine import process_epson_folder
+from photo_organizer.converter.engine import process_epson_folder, save_report
 from photo_organizer.engine import make_cancel_token
 
 
@@ -337,3 +338,89 @@ def test_jpeg_flattens_alpha_on_white_and_preserves_metadata(tmp_path):
         assert min(red, green, blue) > 240
         assert converted.info["dpi"] == pytest.approx((300, 300), abs=1)
         assert converted.getexif()[270] == "scanner description"
+
+
+def test_cancelled_current_group_keeps_partial_operations(tmp_path, monkeypatch):
+    source = tmp_path / "scans"
+    source.mkdir()
+    scan = source / "scan.tif"
+    make_tiff(scan)
+    token = make_cancel_token()
+
+    def cancel_jpeg(src, dest, fmt, qual, cancel_event):
+        cancel_event.set()
+        raise converter_engine.OperationCancelled("cancelled")
+
+    monkeypatch.setattr(converter_engine, "_save_image", cancel_jpeg)
+
+    result = run_converter(
+        source,
+        dry_run=False,
+        create_heic=False,
+        create_jpg=True,
+        variant_policy="none",
+        cancel_event=token,
+    )
+
+    assert result.cancelled is True
+    assert len(result.groups) == 1
+    assert [d.status for d in result.groups[0].details] == ["written", "cancelled"]
+    assert scan.is_file()
+
+
+def test_cancel_during_encode_prevents_publication(tmp_path):
+    dest = tmp_path / "output.tif"
+    token = make_cancel_token()
+
+    def write_then_cancel(temp_path):
+        temp_path.write_bytes(b"encoded")
+        token.set()
+
+    with pytest.raises(converter_engine.OperationCancelled):
+        converter_engine._atomic_replace_temp(dest, write_then_cancel, token)
+
+    assert not dest.exists()
+    assert not list(tmp_path.glob(".output.tif.tmp.*"))
+
+
+def test_original_move_is_atomic_and_never_clobbers(tmp_path):
+    source = tmp_path / "scan.tif"
+    destination = tmp_path / "originals" / "scan.tif"
+    source.write_bytes(b"new")
+    destination.parent.mkdir()
+    destination.write_bytes(b"existing")
+
+    with pytest.raises(FileExistsError):
+        converter_engine._move_no_clobber(source, destination)
+
+    assert source.read_bytes() == b"new"
+    assert destination.read_bytes() == b"existing"
+
+
+def test_report_totals_are_derived_from_structured_statuses(tmp_path):
+    source = tmp_path / "scans"
+    source.mkdir()
+    make_tiff(source / "scan.tif")
+    result = run_converter(
+        source,
+        dry_run=True,
+        create_heic=False,
+        create_jpg=False,
+        variant_policy="none",
+    )
+    report = tmp_path / "report.json"
+
+    save_report(result, report)
+
+    data = json.loads(report.read_text())
+    assert data["summary"] == {
+        "total_groups": 1,
+        "successful_groups": 1,
+        "total_operations": 1,
+        "planned": 1,
+        "written": 0,
+        "moved": 0,
+        "skipped": 0,
+        "failed": 0,
+        "cancelled": False,
+    }

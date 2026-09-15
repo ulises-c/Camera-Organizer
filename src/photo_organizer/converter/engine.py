@@ -5,7 +5,6 @@ Handles parallel processing, smart archiving, and multi-format output.
 import json
 import logging
 import os
-import shutil
 import tempfile
 import time
 from collections import Counter
@@ -176,6 +175,18 @@ def _atomic_replace_temp(dest: Path, write_fn: Callable[[Path], None], cancel_ev
         except Exception:
             pass
 
+
+def _move_no_clobber(source: Path, dest: Path) -> None:
+    """Move a regular file within the source tree without replacement races."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    os.link(source, dest)  # atomic EEXIST protection
+    try:
+        source.unlink()
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
+
+
 def _check_cancel(cancel_event):
     """Checks if cancellation was requested and raises exception to stop flow."""
     if cancel_event and cancel_event.is_set():
@@ -269,6 +280,9 @@ def process_epson_folder(folder_path: Path, options: dict,
         for idx, (stem, variants) in enumerate(groups.items(), 1):
             _check_cancel(cancel_event)
             _log(f"Processing group [{idx}/{total_groups}]: {stem}")
+            group_details: list[OpDetail] = []
+            group_result = ConversionResult(stem, False, group_details)
+            results.append(group_result)
 
             # 4. Smart Analysis
             # Separate backsides (Epson FastFoto denotes backs with _b)
@@ -298,7 +312,6 @@ def process_epson_folder(folder_path: Path, options: dict,
                     selected_fronts = [fronts[0]]
                     rejected_fronts = fronts[1:]
 
-            group_details = []
             variants_processed_successfully = []
 
             all_process_candidates = fronts + backs
@@ -358,6 +371,8 @@ def process_epson_folder(folder_path: Path, options: dict,
                             tiff_success = True
                     except OperationCancelled:
                         detail.status = "cancelled"
+                        detail.duration = round(time.time() - t0, 3)
+                        group_details.append(detail)
                         raise
                     except Exception as e:
                         detail.status = "failed"
@@ -401,6 +416,8 @@ def process_epson_folder(folder_path: Path, options: dict,
                                     h_det.status = "written"
                             except OperationCancelled:
                                 h_det.status = "cancelled"
+                                h_det.duration = round(time.time() - t0, 3)
+                                group_details.append(h_det)
                                 raise
                             except Exception as e:
                                 h_det.status = "failed"
@@ -427,6 +444,8 @@ def process_epson_folder(folder_path: Path, options: dict,
                                 j_det.status = "written"
                         except OperationCancelled:
                             j_det.status = "cancelled"
+                            j_det.duration = round(time.time() - t0, 3)
+                            group_details.append(j_det)
                             raise
                         except Exception as e:
                             j_det.status = "failed"
@@ -446,8 +465,7 @@ def process_epson_folder(folder_path: Path, options: dict,
                     _check_cancel(cancel_event)
                     try:
                         original_dest = dirs['originals'] / variant.name
-                        original_dest.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.move(str(variant), str(original_dest))
+                        _move_no_clobber(variant, original_dest)
                         group_details.append(OpDetail(
                             variant.name, "MOVE_ORIGINAL",
                             str(original_dest.relative_to(folder_path)), "moved"
@@ -459,9 +477,10 @@ def process_epson_folder(folder_path: Path, options: dict,
                             error=str(e)
                         ))
 
-            group_success = bool(group_details) and all(d.success for d in group_details)
-            results.append(ConversionResult(stem, group_success, group_details))
-            
+            group_result.success = bool(group_details) and all(
+                detail.success for detail in group_details
+            )
+
             # Progress Update
             progress_callback((idx / total_groups) * 100)
 
@@ -540,24 +559,30 @@ def _save_image(src, dest, fmt, qual, cancel_event):
 
     _atomic_replace_temp(dest, _write, cancel_event=cancel_event)
 
-def save_report(results: list[ConversionResult], output_path: Path):
+def save_report(result: ConversionRunResult, output_path: Path) -> None:
+    details = [detail for group in result.groups for detail in group.details]
     data = {
         "timestamp": datetime.now().isoformat(),
         "summary": {
-            "total_groups": len(results),
-            "successful_groups": sum(1 for r in results if r.success),
-            "total_operations": sum(len(r.details) for r in results)
+            "total_groups": len(result.groups),
+            "successful_groups": sum(1 for group in result.groups if group.success),
+            "total_operations": len(details),
+            "planned": sum(1 for detail in details if detail.status == "planned"),
+            "written": sum(1 for detail in details if detail.status == "written"),
+            "moved": sum(1 for detail in details if detail.status == "moved"),
+            "skipped": sum(
+                1 for detail in details if detail.status.startswith("skipped_")
+            ),
+            "failed": sum(1 for detail in details if detail.status == "failed"),
+            "cancelled": result.cancelled,
         },
         "groups": [
             {
-                "group": r.source_stem,
-                "success": r.success,
-                "ops": [vars(d) for d in r.details]
-            } for r in results
-        ]
+                "group": group.source_stem,
+                "success": group.success,
+                "ops": [vars(detail) for detail in group.details],
+            }
+            for group in result.groups
+        ],
     }
-    try:
-        with open(output_path, 'w') as f:
-            json.dump(data, f, indent=2)
-    except Exception as e:
-        logger.error(f"Failed to save report: {e}")
+    Path(output_path).write_text(json.dumps(data, indent=2), encoding="utf-8")
