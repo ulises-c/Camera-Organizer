@@ -63,7 +63,17 @@ def main(argv=None) -> int:
     results = process_video_folder(args.folder, opts, on_progress, on_log)
     if args.report:
         save_report(results, args.report)
-        log.info(f"Report → {args.report}")
+        log.info(f"Op-log report → {args.report}")
+
+    # Always emit the rich before/after manifest (JSON + Markdown) unless dry-run.
+    if not opts["dry_run"]:
+        try:
+            from photo_organizer.video_converter.report import write_reports
+            jp, mp = write_reports(args.folder, opts)
+            log.info(f"Manifest → {jp}")
+            log.info(f"Manifest → {mp}")
+        except Exception as e:  # report failure must not fail the encode
+            log.warning(f"Could not build manifest: {e}")
     return 0 if all(r.success for r in results) else 1
 
 
