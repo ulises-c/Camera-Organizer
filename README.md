@@ -37,149 +37,82 @@ A comprehensive toolkit for organizing photos, videos, and scans. Includes multi
 
 ## System Requirements
 
-### macOS
-
-```bash
-# Install Homebrew if needed
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# Install required packages
-brew install tcl-tk pyenv poetry
-
-# Build Python with Tkinter support
-export LDFLAGS="-L$(brew --prefix tcl-tk)/lib"
-export CPPFLAGS="-I$(brew --prefix tcl-tk)/include"
-export PKG_CONFIG_PATH="$(brew --prefix tcl-tk)/lib/pkgconfig"
-pyenv install 3.12
-```
-
-### Linux (Debian/Ubuntu)
-
-```bash
-# Install build dependencies
-sudo apt-get update && sudo apt-get install -y \
-    build-essential libssl-dev zlib1g-dev libbz2-dev \
-    libreadline-dev libsqlite3-dev curl git \
-    libncursesw5-dev xz-utils tk-dev libxml2-dev \
-    libxmlsec1-dev libffi-dev liblzma-dev libheif-dev
-
-# Install pyenv
-curl https://pyenv.run | bash
-
-# Install Poetry
-curl -sSL https://install.python-poetry.org | python3 -
-```
+- Python 3.11–3.13
+- [`uv`](https://docs.astral.sh/uv/)
+- `ffmpeg` + `ffprobe` for video conversion (`brew install ffmpeg` on macOS)
+- A desktop supported by Qt/PySide6
 
 ## Quick Start
 
 ```bash
-# 1. Check your system
 make doctor
-
-# 2. Complete setup
-make setup
-
-# 3. Run the application
+make sync
 make run
 ```
+
+`make run` launches the unified PySide6 application. The Batch Renamer is the
+first fully migrated panel; the remaining tools currently show migration stubs
+while their UI-agnostic engines remain available for integration.
 
 ## Development Commands
 
 ```bash
-make help       # Show all commands
-make doctor     # Check system dependencies
-make setup      # Install everything
-make install    # Install Python packages only
-make run        # Launch the application
-make run-dev    # Run in development mode
-make clean      # Clean virtual environment
-```
-
-## Troubleshooting
-
-### "tkinter not available" error
-
-- **macOS**: Reinstall Python with tcl-tk support (see System Requirements)
-- **Linux**: Install `tk-dev` package before building Python
-
-### "Command not found: poetry"
-
-Install Poetry: https://python-poetry.org/docs/#installation
-
-### Old command still works
-
-You can also run:
-
-```bash
-poetry run photo-organizer
-poetry run python -m photo_organizer.launcher
+make help        # List commands
+make sync        # Install dependencies with uv
+make run         # Launch the PySide6 app
+make lint        # Run Ruff
+make test        # Run pytest
+make clean       # Remove Python caches
 ```
 
 ## Usage
 
-### Launcher (Recommended)
-
-Start the main launcher to access all tools:
+### PySide6 application
 
 ```bash
 make run
-# Or directly:
-python src/launcher.py
+# or
+uv run camera-organizer
 ```
 
-### Individual Tools
+The Batch Renamer defaults to **Preview only**, so its first run does not change
+files. Clear that option and confirm the warning dialog to perform live renames.
 
-Each tool can be run independently:
+### Video converter CLI
 
 ```bash
-# Photo & Video Organizer
-python src/organizer/gui.py
+# Plan only (default)
+uv run python -m photo_organizer.video_converter.cli "/path/to/footage" --dry-run
 
-# Folder Renamer
-python src/renamer/folder_gui.py
-
-# Batch Renamer
-python src/renamer/batch_gui.py
-
-# TIFF Converter
-python src/converter/gui.py
+# Perform Log→Rec709 and 1080p HEVC conversion
+uv run python -m photo_organizer.video_converter.cli "/path/to/footage" --run
 ```
 
 ## Project Structure
 
 ```
-photo-organizer/
-├── src/
-│   ├── launcher.py              # Main launcher GUI
-│   ├── shared/                  # Common utilities
-│   │   ├── metadata.py          # EXIF/metadata extraction
-│   │   ├── camera_models.py     # Camera model database
-│   │   ├── file_utils.py        # File operations
-│   │   ├── gui_utils.py         # GUI utilities
-│   │   └── config.py            # Application constants
-│   ├── organizer/               # Photo/video organizer
-│   │   ├── core.py              # Organization logic
-│   │   └── gui.py               # Organizer GUI
-│   ├── renamer/                 # Renaming tools
-│   │   ├── batch_gui.py         # Batch renamer
-│   │   └── folder_gui.py        # Folder renamer
-│   ├── converter/               # TIFF converter
-│   │   ├── core.py              # Conversion logic
-│   │   └── gui.py               # Converter GUI
-│   └── data/
-│       └── camera_models_seed.txt  # Initial camera models
-├── tiff-to-heic/                # Original TIFF converter (preserved)
-├── pyproject.toml
-├── Makefile
-└── README.md
+src/photo_organizer/
+├── app.py                       # PySide6 application entry point
+├── engine/__init__.py           # Shared engine contract and tool registry
+├── gui/
+│   ├── main_window.py           # Unified window and panel routing
+│   ├── worker.py                # Reusable background QThread
+│   └── panels/
+│       └── batch_renamer.py     # First completed PySide6 tool panel
+├── organizer/engine.py          # Photo/video organization logic
+├── renamer/engine.py            # Batch and folder rename logic
+├── converter/engine.py          # TIFF/Epson conversion logic
+├── video_converter/             # Video engine, probe, LUT, reports, and CLI
+├── shared/                      # Metadata, models, config, image/file utilities
+└── data/                        # Packaged camera-model seeds
 ```
 
 ## Camera Models Database
 
 The application maintains a user-writable camera models database using `appdirs` for proper cross-platform support. The database is stored at:
 
-- **macOS**: `~/Library/Application Support/photo_organizer/camera_models.txt`
-- **Linux**: `~/.local/share/photo_organizer/camera_models.txt`
+- **macOS**: `~/Library/Application Support/photo_organizer/camera_models.json`
+- **Linux**: `~/.local/share/photo_organizer/camera_models.json`
 
 New camera models are automatically added when detected during organization.
 
@@ -207,31 +140,21 @@ New camera models are automatically added when detected during organization.
 
 ## Platform Support
 
-- **Primary**: macOS (tested on macOS 12+)
-- **Note**: System Python on macOS may have limited tkinter support. For best results, use Python from [python.org](https://www.python.org/downloads/) or Homebrew.
+- macOS is the primary target.
+- Linux and Windows are supported by the Python/PySide6 stack but are not yet
+  covered by project CI.
 
 ## Development
 
-### Setup Development Environment
+Keep all file-processing logic in UI-agnostic engines. PySide6 panels should
+only validate inputs, construct option dictionaries, run an `EngineWorker`, and
+render its signals/results.
+
+Before submitting a change:
 
 ```bash
-# Install Python with pyenv
-make install-python
-
-# Create Poetry environment
-make create-env
-
-# Install dependencies
-make install
-
-# Activate environment
-source .venv/bin/activate
-```
-
-### Clean Environment
-
-```bash
-make clean
+make lint
+make test
 ```
 
 ## Tested Devices

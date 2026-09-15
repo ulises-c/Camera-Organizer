@@ -39,12 +39,15 @@ The GUI discovers tools through `engine.TOOLS` (a list of `ToolSpec`) and loads
 each engine lazily via `ToolSpec.load_engine()` — so adding a tool is one entry
 in the registry, no wiring.
 
-## GUI status: deferred
+## GUI status: migration in progress
 
-`main_window.py` shows a working window with a tool list and **stub panels**. The
-engines are complete and runnable now via CLI / `EngineWorker`. Building a real
-panel = source picker + options widgets + progress bar + log view + Cancel, all
-driven by an `EngineWorker` (already implemented and tested).
+`main_window.py` provides the unified application shell. The **Batch Renamer**
+is the first complete panel: folder/model inputs, preview-safe default, live-run
+confirmation, progress, logs, structured results, and cooperative cancellation.
+The remaining tools still show explicit stubs while their engines remain usable.
+
+Adding the next real panel means wiring its source/options controls to an
+`EngineWorker`; processing decisions stay in the engine.
 
 ## Rules replacing the old tkinter constraints
 

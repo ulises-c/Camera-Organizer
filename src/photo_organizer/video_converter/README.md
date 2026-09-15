@@ -2,7 +2,8 @@
 
 Smart, metadata-driven conversion of camera footage to Rec709, then efficient
 1080p HEVC encodes for sharing (Instagram etc.). Built to match the repo's
-module conventions (`core.py` logic + callbacks; a `gui.py` will follow).
+module conventions (UI-agnostic engine + callbacks, with CLI and PySide6
+front-ends sharing the same entry point).
 
 ## Why "smart"
 
@@ -50,10 +51,11 @@ python -m photo_organizer.video_converter.cli "/path/to/footage" --run --lut "/a
 Outputs land in `01_rec709_master/` and `02_share_1080p/` inside the source folder.
 Existing outputs are skipped, so runs are resumable.
 
-## Next: GUI
-A `gui.py` (tkinter + ttkbootstrap, per `notes/GUI_CONSTRAINTS.md`) will call
-`core.process_video_folder(folder, options, progress_cb, log_cb)` — the same
-entry point the CLI uses. Planned controls: source picker, per-clip Log/Rec709
-badges, LUT dropdown (`luts.catalog()`), CRF/height, dry-run toggle, progress +
-cancel. It should be added to `launcher.py`'s `TOOLS` list as
-`photo_organizer.video_converter.gui`.
+## GUI status
+
+The unified PySide6 shell discovers this engine through `engine.TOOLS`; its
+full video panel is still pending. That panel will call
+`engine.process_video_folder(folder, options, progress_cb, log_cb)` through the
+shared `EngineWorker`. Planned controls include source selection, per-clip
+Log/Rec709 badges, LUT selection (`luts.catalog()`), CRF/height, preview mode,
+progress, logs, and cooperative cancellation.
