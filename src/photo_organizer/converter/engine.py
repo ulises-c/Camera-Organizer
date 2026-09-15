@@ -38,21 +38,45 @@ from photo_organizer.converter.variant_selection import (
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_OPTIONS = {
+    "dry_run": True,
+    "compression": "deflate",
+    "create_heic": HEIF_SAVE_AVAILABLE,
+    "heic_quality": 100,
+    "create_jpg": False,
+    "jpg_quality": 95,
+    "variant_policy": "smart",
+    "variant_smart_archiving": True,
+    "variant_smart_conversion": True,
+}
+
+
 @dataclass
 class OpDetail:
     source: str
     action: str
     output: str
-    success: bool
+    status: str
     size_bytes: int = 0
     duration: float = 0.0
     error: str = ""
+
+    @property
+    def success(self) -> bool:
+        return self.status in {"planned", "written", "moved"}
+
 
 @dataclass
 class ConversionResult:
     source_stem: str
     success: bool
     details: list[OpDetail] = field(default_factory=list)
+
+
+@dataclass
+class ConversionRunResult:
+    groups: list[ConversionResult] = field(default_factory=list)
+    cancelled: bool = False
 
 # Exclude tags that are layout/pointers/binary blobs and frequently break scanner TIFF re-save.
 EXCLUDED_TIFF_TAGS = {
@@ -154,26 +178,61 @@ def _check_cancel(cancel_event):
     if cancel_event and cancel_event.is_set():
         raise OperationCancelled("Process cancelled by user.")
 
-def process_epson_folder(folder_path: Path, options: dict, progress_callback: Callable, log_callback: Callable) -> list[ConversionResult]:
+
+def _validated_options(options: dict | None) -> dict:
+    provided = dict(options or {})
+    unknown = set(provided) - (set(DEFAULT_OPTIONS) | {"cancel_event"})
+    if unknown:
+        raise ValueError(f"Unknown converter options: {', '.join(sorted(unknown))}")
+    opts = {**DEFAULT_OPTIONS, **provided}
+    if opts["compression"] not in {"deflate", "lzw"}:
+        raise ValueError("compression must be 'deflate' or 'lzw'")
+    if opts["variant_policy"] not in {"smart", "base", "augment", "none"}:
+        raise ValueError("variant_policy must be smart, base, augment, or none")
+    for key in ("heic_quality", "jpg_quality"):
+        value = opts[key]
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
+            raise ValueError(f"{key} must be an integer from 0 to 100")
+    for key in ("dry_run", "create_heic", "create_jpg",
+                "variant_smart_archiving", "variant_smart_conversion"):
+        if not isinstance(opts[key], bool):
+            raise TypeError(f"{key} must be boolean")
+    return opts
+
+
+def process_epson_folder(folder_path: Path, options: dict,
+                         progress_callback: Callable,
+                         log_callback: Callable) -> ConversionRunResult:
     def _log(msg):
         if log_callback: log_callback(msg)
         else: logger.info(msg)
 
+    opts = _validated_options(options)
+    folder_path = Path(folder_path)
+    if not folder_path.is_dir():
+        raise ValueError(f"Source folder does not exist: {folder_path}")
+    if folder_path.is_symlink():
+        raise ValueError("Source folder cannot be a symlink")
+    run_result = ConversionRunResult()
+
     # 1. Extract Options
-    dry_run = options.get('dry_run', True)
-    create_tiff = True # Forced by requirements
-    compression = options.get('compression', 'deflate')  # 'deflate' (ZIP) or 'lzw'
-    create_heic = options.get('create_heic', True)
-    heic_quality = options.get('heic_quality', 100)
-    create_jpg = options.get('create_jpg', False)
-    jpg_quality = options.get('jpg_quality', 95)
-    
+    dry_run = opts['dry_run']
+    create_tiff = True  # Lossless TIFF is the mandatory workflow output.
+    compression = opts['compression']
+    create_heic = opts['create_heic']
+    heic_quality = opts['heic_quality']
+    create_jpg = opts['create_jpg']
+    jpg_quality = opts['jpg_quality']
+
     # FastFoto Workflow
-    ff_policy = options.get('variant_policy', 'smart')
-    ff_smart_archive = options.get('variant_smart_archiving', True)
-    ff_smart_convert = options.get('variant_smart_conversion', True)
-    
-    cancel_event = options.get('cancel_event')
+    ff_policy = opts['variant_policy']
+    ff_smart_archive = opts['variant_smart_archiving']
+    ff_smart_convert = opts['variant_smart_conversion']
+
+    cancel_event = opts.get('cancel_event')
+    if cancel_event and cancel_event.is_set():
+        run_result.cancelled = True
+        return run_result
 
     # 2. Directory Setup
     dirs = {
@@ -188,16 +247,18 @@ def process_epson_folder(folder_path: Path, options: dict, progress_callback: Ca
         for d in dirs.values():
             d.mkdir(parents=True, exist_ok=True)
 
-    # 3. Scanning
-    # Get all TIFFs that are in the root folder (exclude subfolders)
-    tiff_files = [f for f in folder_path.glob("*.[tT][iI][fF]*") if f.is_file() and f.parent == folder_path]
-    
+    # 3. Scanning — exact root-level .tif/.tiff files only.
+    tiff_files = sorted(
+        f for f in folder_path.iterdir()
+        if f.is_file() and not f.is_symlink() and f.suffix.lower() in {'.tif', '.tiff'}
+    )
+
     if not tiff_files:
         _log("No TIFF files found in source directory.")
-        return []
+        return run_result
 
     groups = group_variants(tiff_files)
-    results = []
+    results = run_result.groups
     total_groups = len(groups)
 
     try:
@@ -254,17 +315,26 @@ def process_epson_folder(folder_path: Path, options: dict, progress_callback: Ca
                 
                 tiff_success = False
                 if create_tiff:
-                    detail = OpDetail(source=variant.name, action=f"TIFF-{compression.upper()}", output=dest_tiff.name, success=False)
+                    detail = OpDetail(
+                        source=variant.name,
+                        action=f"TIFF-{compression.upper()}",
+                        output=str(dest_tiff.relative_to(folder_path)),
+                        status="planned" if dry_run else "pending",
+                    )
                     t0 = time.time()
                     
                     try:
                         if not dry_run:
                             _save_tiff(variant, dest_tiff, compression, cancel_event)
                             detail.size_bytes = dest_tiff.stat().st_size
-                        detail.success = True
+                            detail.status = "written"
                         tiff_success = True
                         variants_processed_successfully.append(variant)
+                    except OperationCancelled:
+                        detail.status = "cancelled"
+                        raise
                     except Exception as e:
+                        detail.status = "failed"
                         detail.error = str(e)
                         _log(f"  Error (TIFF): {e}")
                     
@@ -282,14 +352,23 @@ def process_epson_folder(folder_path: Path, options: dict, progress_callback: Ca
                     # HEIC
                     if create_heic and HEIF_SAVE_AVAILABLE:
                         h_dest = dirs['heic'] / f"{variant.stem}.heic"
-                        h_det = OpDetail(source=variant.name, action="HEIC", output=h_dest.name, success=False)
+                        h_det = OpDetail(
+                            source=variant.name,
+                            action="HEIC",
+                            output=str(h_dest.relative_to(folder_path)),
+                            status="planned" if dry_run else "pending",
+                        )
                         t0 = time.time()
                         try:
                             if not dry_run:
                                 _save_image(variant, h_dest, "HEIF", heic_quality, cancel_event)
                                 h_det.size_bytes = h_dest.stat().st_size
-                            h_det.success = True
+                                h_det.status = "written"
+                        except OperationCancelled:
+                            h_det.status = "cancelled"
+                            raise
                         except Exception as e:
+                            h_det.status = "failed"
                             h_det.error = str(e)
                         h_det.duration = round(time.time() - t0, 3)
                         group_details.append(h_det)
@@ -297,14 +376,23 @@ def process_epson_folder(folder_path: Path, options: dict, progress_callback: Ca
                     # JPG
                     if create_jpg:
                         j_dest = dirs['jpg'] / f"{variant.stem}.jpg"
-                        j_det = OpDetail(source=variant.name, action="JPG", output=j_dest.name, success=False)
+                        j_det = OpDetail(
+                            source=variant.name,
+                            action="JPG",
+                            output=str(j_dest.relative_to(folder_path)),
+                            status="planned" if dry_run else "pending",
+                        )
                         t0 = time.time()
                         try:
                             if not dry_run:
                                 _save_image(variant, j_dest, "JPEG", jpg_quality, cancel_event)
                                 j_det.size_bytes = j_dest.stat().st_size
-                            j_det.success = True
+                                j_det.status = "written"
+                        except OperationCancelled:
+                            j_det.status = "cancelled"
+                            raise
                         except Exception as e:
+                            j_det.status = "failed"
                             j_det.error = str(e)
                         j_det.duration = round(time.time() - t0, 3)
                         group_details.append(j_det)
@@ -314,25 +402,31 @@ def process_epson_folder(folder_path: Path, options: dict, progress_callback: Ca
                 for variant in variants_processed_successfully:
                     _check_cancel(cancel_event)
                     try:
-                        shutil.move(str(variant), str(dirs['originals'] / variant.name))
-                        group_details.append(OpDetail(variant.name, "MOVE_ORIGINAL", "originals/", True))
+                        original_dest = dirs['originals'] / variant.name
+                        shutil.move(str(variant), str(original_dest))
+                        group_details.append(OpDetail(
+                            variant.name, "MOVE_ORIGINAL",
+                            str(original_dest.relative_to(folder_path)), "moved"
+                        ))
                     except Exception as e:
                         _log(f"  Failed to move original {variant.name}: {e}")
-                        group_details.append(OpDetail(variant.name, "MOVE_ORIGINAL", "originals/", False, error=str(e)))
+                        group_details.append(OpDetail(
+                            variant.name, "MOVE_ORIGINAL", "originals/", "failed",
+                            error=str(e)
+                        ))
 
-            results.append(ConversionResult(stem, True, group_details))
+            group_success = bool(group_details) and all(d.success for d in group_details)
+            results.append(ConversionResult(stem, group_success, group_details))
             
             # Progress Update
             progress_callback((idx / total_groups) * 100)
 
     except OperationCancelled:
         _log("🛑 Process Cancelled.")
-        return results
-    except Exception as e:
-        _log(f"❌ Fatal Error: {e}")
-        logger.exception("Core loop crash")
-        
-    return results
+        run_result.cancelled = True
+        return run_result
+
+    return run_result
 
 def _save_tiff(src: Path, dest: Path, algo: str, cancel_event):
     # Pillow TIFF compression names vary; these are commonly supported:
