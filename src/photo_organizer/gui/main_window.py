@@ -31,6 +31,7 @@ from photo_organizer.engine import TOOLS, ToolSpec
 from photo_organizer.gui.panels.batch_renamer import BatchRenamerPanel
 from photo_organizer.gui.panels.folder_renamer import FolderRenamerPanel
 from photo_organizer.gui.panels.organizer import OrganizerPanel
+from photo_organizer.gui.panels.tiff_converter import TiffConverterPanel
 from photo_organizer.gui.panels.video_converter import VideoConverterPanel
 
 
@@ -64,6 +65,8 @@ def make_panel(spec: ToolSpec) -> QWidget:
     """Build a migrated panel when available, otherwise an explicit stub."""
     if spec.key == "organizer":
         return OrganizerPanel()
+    if spec.key == "tiff_converter":
+        return TiffConverterPanel()
     if spec.key == "video_converter":
         return VideoConverterPanel()
     if spec.key == "folder_renamer":
@@ -100,6 +103,22 @@ class MainWindow(QMainWindow):
 
         self.tool_list.currentRowChanged.connect(self.stack.setCurrentIndex)
         self.tool_list.setCurrentRow(0)
+
+    def closeEvent(self, event):
+        """Cancel and join any in-flight panel workers before the window dies.
+
+        Destroying a panel-owned QThread mid-encode raises 'QThread: Destroyed
+        while thread is still running'. Each panel keeps its worker on `_worker`
+        (None when idle); request cooperative cancellation, then wait for the
+        thread to unwind so no encode is publishing as we tear down.
+        """
+        for index in range(self.stack.count()):
+            panel = self.stack.widget(index)
+            worker = getattr(panel, "_worker", None)
+            if worker is not None and worker.isRunning():
+                worker.cancel()
+                worker.wait()
+        super().closeEvent(event)
 
 
 def run() -> int:
