@@ -28,14 +28,13 @@ A comprehensive toolkit for organizing photos, videos, and scans. Includes multi
 
 ### 🖼️ TIFF Converter
 
-- Convert TIFF to LZW/DEFLATE compressed TIFF
-- Convert TIFF to HEIC/HEIF format
-- Epson FastFoto FF-680W workflow with automatic variant selection
-- Intelligent quality-based selection between augmented (\_a) and base files
-- Metadata preservation (EXIF, ICC profiles)
-- Lossless and lossy compression options
-- Parallel processing for large batches
-- Automatic organization into LZW_compressed/, HEIC/, and uncompressed/ folders
+- Create verified lossless TIFFs (Deflate/`.ZIP.TIF` or LZW/`.LZW.TIF`), preserving all pages
+- Optional lossy HEIC and JPEG copies (when a HEIF encoder is available)
+- Epson FastFoto FF-680W workflow with deterministic `_a`/`_b` variant selection
+- Quality-based front selection (smart), or explicit prefer-base / prefer-augmented
+- Metadata preservation (EXIF, ICC, DPI) with alpha flattened onto white for lossy outputs
+- Never overwrites: existing outputs and archived originals are skipped
+- Outputs organized into `lossless_compressed/`, `lossless_compressed/archive/`, `HEIC/`, `JPG/`, and `originals/`
 
 ## System Requirements
 
@@ -52,10 +51,10 @@ make sync
 make run
 ```
 
-`make run` launches the unified PySide6 application. The Photo & Video
-Organizer, Folder Renamer, Batch Renamer, and Video Converter are fully
-migrated; only the TIFF Converter still shows a migration stub while its
-UI-agnostic engine remains available.
+`make run` launches the unified PySide6 application. All five tools — Photo &
+Video Organizer, Folder Renamer, Batch Renamer, Video Converter, and TIFF
+Converter — are fully migrated to native panels. The migration from the old
+tkinter launcher is complete.
 
 ## Development Commands
 
@@ -84,6 +83,16 @@ dialog to perform live changes. The Organizer moves files (never overwriting:
 existing or already-organized destinations are skipped) and can target a
 separate destination folder. Folder merges must be enabled explicitly;
 conflicts receive a `_dupN` suffix rather than overwriting existing files.
+
+### TIFF converter
+
+The **TIFF Converter** panel scans root-level `.tif`/`.tiff` files and always
+writes a verified lossless TIFF (Deflate or LZW), with optional lossy HEIC/JPEG
+copies. It defaults to **Preview only**, which validates the plan — inputs,
+multipage handling, destination collisions, and encoder availability — without
+touching disk. A live run writes derivatives, re-opens each TIFF to confirm it,
+then moves the originals; existing outputs and archived originals are skipped
+rather than overwritten. FastFoto `_a`/`_b` variant selection is optional.
 
 ### Video converter
 
@@ -114,6 +123,7 @@ src/photo_organizer/
 │       ├── organizer.py         # Metadata-based date/camera-model sorting
 │       ├── batch_renamer.py     # UnknownCamera file/folder renaming
 │       ├── folder_renamer.py    # Metadata-based camera-folder renaming
+│       ├── tiff_converter.py    # Lossless TIFF + lossy HEIC/JPEG (FastFoto)
 │       └── video_converter.py   # Log→Rec709 + 1080p HEVC share encode
 ├── organizer/engine.py          # Photo/video organization logic
 ├── renamer/engine.py            # Batch and folder rename logic

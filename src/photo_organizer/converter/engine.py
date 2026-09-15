@@ -1,6 +1,23 @@
-"""
-TIFF Converter Core - Professional Workflow
-Handles parallel processing, smart archiving, and multi-format output.
+"""TIFF/Epson FastFoto converter — engine.
+
+Produces a verified lossless TIFF for every root-level ``.tif``/``.tiff`` input,
+plus optional lossy HEIC/JPEG copies, then archives the originals.
+
+Safety contract:
+- Options are validated up front (``_validated_options``); unknown keys, bad
+  compression/variant values, and out-of-range qualities fail before any I/O.
+- Nothing is overwritten: an existing output, an existing archived original, a
+  same-run destination collision, or a duplicate-stem mapping is reported as
+  ``skipped_collision`` and the source is left in place.
+- Output directories cannot resolve outside the source root (symlink escape).
+- Lossless TIFFs preserve every page and are re-opened and pixel-verified before
+  the source becomes eligible to move; a source moves only after ALL requested
+  derivatives for it succeed.
+- Preview (``dry_run``) validates the plan without writing, moving, or creating
+  directories, and marks operations ``planned`` (never a completed success).
+- Cancellation is truthful: partial current-group operations are retained, the
+  run carries ``cancelled=True``, and an encode that finished after a cancel
+  request is never published.
 """
 import json
 import logging

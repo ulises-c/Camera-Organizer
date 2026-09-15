@@ -50,22 +50,25 @@ each engine lazily via `ToolSpec.load_engine()`. Registering a tool is one entry
 in `TOOLS`; wiring a *real* panel is an explicit routing branch in
 `make_panel()` (the default is the shared `StubPanel`).
 
-## GUI status: migration in progress
+## GUI status: migration complete
 
-`main_window.py` provides the unified application shell. The **Photo & Video
-Organizer**, **Folder Renamer**, **Batch Renamer**, and **Video Converter** are
-complete panels with preview-safe defaults, live-run confirmation, progress,
-logs, structured results, and cooperative cancellation. Organizer adds a separate
-destination folder, optional recursion, non-overwriting collision skips, truthful
-partial cancellation, and camera-model persistence limited to successful live
-moves. Folder Renamer adds recursive discovery, optional camera-model suffixes,
-and explicit non-overwriting merges. Video Converter adds LUT auto-detect/override,
-per-stage toggles, x265 tuning, an ffmpeg-on-PATH guard for live runs, and a
-per-clip/per-stage result table. Only the TIFF Converter still shows a stub while
-its engine remains usable.
+`main_window.py` provides the unified application shell. All five tools —
+**Photo & Video Organizer**, **Folder Renamer**, **Batch Renamer**, **Video
+Converter**, and **TIFF Converter** — are complete native panels with
+preview-safe defaults, live-run confirmation, progress, logs, structured
+results, and cooperative cancellation. Organizer adds a separate destination
+folder, optional recursion, non-overwriting collision skips, truthful partial
+cancellation, and camera-model persistence limited to successful live moves.
+Folder Renamer adds recursive discovery, optional camera-model suffixes, and
+explicit non-overwriting merges. Video Converter adds LUT auto-detect/override,
+per-stage toggles, x265 tuning, and an ffmpeg-on-PATH guard for live runs. TIFF
+Converter adds a two-column option matrix (compression, HEIC/JPEG with capability
+gating, FastFoto variant policy), verified lossless output, and no-overwrite
+collision skips. `MainWindow.closeEvent` cancels and joins any in-flight panel
+worker so a mid-encode close never destroys a running `QThread`.
 
-Adding the next real panel means wiring its source/options controls to an
-`EngineWorker`; processing decisions stay in the engine.
+Adding another tool means one `ToolSpec` in `engine.TOOLS` plus a routing branch
+in `make_panel()`; processing decisions stay in the engine.
 
 ## Rules replacing the old tkinter constraints
 
