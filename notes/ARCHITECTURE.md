@@ -13,7 +13,7 @@ src/photo_organizer/
   gui/
     worker.py            EngineWorker(QThread): runs ANY engine off-thread,
                          marshals progress/log callbacks → Qt signals, cancel().
-    main_window.py       Window shell + per-tool panels (stubs for now).
+    main_window.py       Window shell + completed and stub tool panels.
   organizer/engine.py        process_organize(...)
   renamer/engine.py          process_batch_rename(...), process_folder_rename(...)
   converter/engine.py        process_epson_folder(...)   (TIFF/Epson)
@@ -41,10 +41,12 @@ in the registry, no wiring.
 
 ## GUI status: migration in progress
 
-`main_window.py` provides the unified application shell. The **Batch Renamer**
-is the first complete panel: folder/model inputs, preview-safe default, live-run
+`main_window.py` provides the unified application shell. The **Folder Renamer**
+and **Batch Renamer** are complete panels with preview-safe defaults, live-run
 confirmation, progress, logs, structured results, and cooperative cancellation.
-The remaining tools still show explicit stubs while their engines remain usable.
+Folder Renamer additionally exposes recursive discovery, optional camera-model
+suffixes, and explicit non-overwriting merges. Organizer, TIFF Converter, and
+Video Converter still show stubs while their engines remain usable.
 
 Adding the next real panel means wiring its source/options controls to an
 `EngineWorker`; processing decisions stay in the engine.

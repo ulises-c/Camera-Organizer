@@ -15,8 +15,8 @@ A comprehensive toolkit for organizing photos, videos, and scans. Includes multi
 
 - Rename camera-generated folders (NNNYMMDD format)
 - Convert to readable YYYY-MM-DD[_CameraModel] format
-- Metadata extraction from folder contents
-- Sanity checking for date consistency
+- Sample folder media to derive date and camera model metadata
+- Preview recursive renames and optionally merge without overwriting conflicts
 
 ### 🏷️ Batch Renamer
 
@@ -50,9 +50,9 @@ make sync
 make run
 ```
 
-`make run` launches the unified PySide6 application. The Batch Renamer is the
-first fully migrated panel; the remaining tools currently show migration stubs
-while their UI-agnostic engines remain available for integration.
+`make run` launches the unified PySide6 application. The Folder Renamer and
+Batch Renamer are fully migrated; Organizer, TIFF Converter, and Video Converter
+currently show migration stubs while their UI-agnostic engines remain available.
 
 ## Development Commands
 
@@ -75,8 +75,10 @@ make run
 uv run camera-organizer
 ```
 
-The Batch Renamer defaults to **Preview only**, so its first run does not change
-files. Clear that option and confirm the warning dialog to perform live renames.
+Both renamer panels default to **Preview only**, so their first run does not
+change files. Clear that option and confirm the warning dialog to perform live
+renames. Folder merges must also be enabled explicitly; conflicts receive a
+`_dupN` suffix rather than overwriting existing files.
 
 ### Video converter CLI
 
@@ -98,7 +100,8 @@ src/photo_organizer/
 │   ├── main_window.py           # Unified window and panel routing
 │   ├── worker.py                # Reusable background QThread
 │   └── panels/
-│       └── batch_renamer.py     # First completed PySide6 tool panel
+│       ├── batch_renamer.py     # UnknownCamera file/folder renaming
+│       └── folder_renamer.py    # Metadata-based camera-folder renaming
 ├── organizer/engine.py          # Photo/video organization logic
 ├── renamer/engine.py            # Batch and folder rename logic
 ├── converter/engine.py          # TIFF/Epson conversion logic
