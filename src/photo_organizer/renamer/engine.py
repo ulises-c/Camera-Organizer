@@ -256,7 +256,8 @@ def process_folder_rename(source, options: dict,
     parent = str(source)
 
     result = RenameResult(skipped={"pattern_mismatch": 0, "no_metadata": 0,
-                                   "already_correct": 0, "destination_exists": 0})
+                                   "already_correct": 0, "destination_exists": 0,
+                                   "destination_not_directory": 0})
 
     candidates = gather_candidate_folders(parent, recursive)
     if not candidates:
@@ -265,13 +266,22 @@ def process_folder_rename(source, options: dict,
     _log(f"Found {len(candidates)} candidate folders (dry_run={dry_run})")
 
     plan: list[tuple[str, str, str]] = []
+    planned_destinations: set[str] = set()
     for old in candidates:
         new_path, status = compute_new_name(old, include_model)
-        if status == "ok" and new_path:
+        destination_key = (
+            os.path.normcase(os.path.abspath(new_path)) if new_path else None
+        )
+        destination_reserved = destination_key in planned_destinations
+        if status == "ok" and new_path and not destination_reserved:
             plan.append((old, new_path, "rename"))
-        elif status == "merge" and new_path:
-            if merge:
+            planned_destinations.add(destination_key)
+        elif (status == "merge" or destination_reserved) and new_path:
+            if os.path.exists(new_path) and not os.path.isdir(new_path):
+                result.skipped["destination_not_directory"] += 1
+            elif merge:
                 plan.append((old, new_path, "merge"))
+                planned_destinations.add(destination_key)
             else:
                 result.skipped["destination_exists"] += 1
         else:
@@ -290,11 +300,26 @@ def process_folder_rename(source, options: dict,
         _log("Nothing to process.")
         return result
 
+    def _final_destination(path: str) -> str:
+        projected = Path(path)
+        for ancestor_old, ancestor_new, _action in plan:
+            try:
+                relative = projected.relative_to(ancestor_old)
+            except ValueError:
+                continue
+            projected = Path(ancestor_new, relative)
+        return str(projected)
+
     try:
         for idx, (old, new, action) in enumerate(plan, 1):
             check_cancel(cancel_event)
             oldn, newn = os.path.basename(old), os.path.basename(new)
-            op = RenameOp(old=old, new=new, action=action, success=False)
+            op = RenameOp(
+                old=old,
+                new=_final_destination(new),
+                action=action,
+                success=False,
+            )
             try:
                 if action == "rename":
                     if not dry_run:
@@ -303,11 +328,17 @@ def process_folder_rename(source, options: dict,
                 else:
                     _log(f"  MERGE  {oldn} → {newn}")
                     if not dry_run:
-                        _moved, _ = safe_merge_folders(old, new, _log)
+                        _moved, skipped = safe_merge_folders(old, new, _log)
+                        if skipped:
+                            raise RuntimeError(
+                                f"Merge incomplete: {skipped} item(s) could not be moved"
+                            )
                         try:
                             os.rmdir(old)
-                        except OSError:
-                            pass
+                        except OSError as exc:
+                            raise RuntimeError(
+                                "Merge incomplete: source folder is not empty"
+                            ) from exc
                 if not dry_run and include_model:
                     _, raw_model, _ = extract_folder_metadata(new)
                     if raw_model and raw_model != "UnknownCamera":
