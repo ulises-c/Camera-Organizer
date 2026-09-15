@@ -87,6 +87,11 @@ def ffmpeg_bin() -> str:
     return exe
 
 
+def ffmpeg_available() -> bool:
+    """True when both ffmpeg and ffprobe are on PATH (needed for a live run)."""
+    return bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
+
+
 def _run_ffmpeg(cmd: list[str], cancel_event) -> None:
     """Run ffmpeg, polling so a cancel request terminates the child promptly."""
     check_cancel(cancel_event)
@@ -246,11 +251,13 @@ def process_video_folder(folder_path: Path, options: dict,
                     if master_path.exists():
                         _log("  skip stage1 (master exists)")
                         det.success = True
+                    elif dry_run:
+                        # Preview must not require ffmpeg on PATH; record the plan.
+                        det.success = True
                     else:
                         cmd = build_stage1_cmd(clip, master_path, lut, opts["prores_profile"])
-                        if not dry_run:
-                            _run_ffmpeg(cmd, cancel_event)
-                            det.size_bytes = master_path.stat().st_size
+                        _run_ffmpeg(cmd, cancel_event)
+                        det.size_bytes = master_path.stat().st_size
                         det.success = True
                 except OperationCancelled:
                     raise
@@ -275,14 +282,16 @@ def process_video_folder(folder_path: Path, options: dict,
                     if share_path.exists():
                         _log("  skip stage2 (share exists)")
                         det.success = True
+                    elif dry_run:
+                        # Preview must not require ffmpeg on PATH; record the plan.
+                        det.success = True
                     else:
                         cmd = build_stage2_cmd(src, share_path, opts)
-                        if not dry_run:
-                            _run_ffmpeg(cmd, cancel_event)
-                            det.size_bytes = share_path.stat().st_size
-                            tags = verify_color_tags(share_path)
-                            if tags.get("color_transfer") != "bt709":
-                                _log(f"  ⚠ color tag check: {tags}")
+                        _run_ffmpeg(cmd, cancel_event)
+                        det.size_bytes = share_path.stat().st_size
+                        tags = verify_color_tags(share_path)
+                        if tags.get("color_transfer") != "bt709":
+                            _log(f"  ⚠ color tag check: {tags}")
                         det.success = True
                 except OperationCancelled:
                     raise
