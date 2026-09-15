@@ -50,7 +50,13 @@ class EngineWorker(QThread):
                 lambda pct: self.progress.emit(float(pct)),
                 lambda msg: self.message.emit(str(msg)),
             )
-            if self._cancel_token.is_set():
+            # A result may state its own cancellation truthfully (an engine that
+            # ignored the token and finished must NOT be reported as cancelled).
+            # Only fall back to the requested-token when the result is silent.
+            acknowledged = getattr(result, "cancelled", None)
+            if acknowledged is None:
+                acknowledged = self._cancel_token.is_set()
+            if acknowledged:
                 self.cancelled.emit()
             self.result_ready.emit(result)
         except OperationCancelled:
