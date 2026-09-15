@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from photo_organizer.converter import engine as converter_engine
 from photo_organizer.converter.engine import process_epson_folder
 from photo_organizer.engine import make_cancel_token
 
@@ -89,3 +90,131 @@ def test_precancelled_live_run_creates_nothing(tmp_path):
 
     assert result.cancelled is True
     assert sorted(p.name for p in source.iterdir()) == ["photo.tif"]
+
+
+def test_existing_output_is_never_overwritten_and_source_stays(tmp_path):
+    source = tmp_path / "scans"
+    source.mkdir()
+    scan = source / "photo.tif"
+    make_tiff(scan, color=(1, 2, 3))
+    existing = source / "lossless_compressed" / "photo.ZIP.TIF"
+    existing.parent.mkdir()
+    make_tiff(existing, color=(200, 100, 50))
+    original_output = existing.read_bytes()
+
+    result = run_converter(
+        source,
+        dry_run=False,
+        create_heic=False,
+        create_jpg=False,
+        variant_policy="none",
+    )
+
+    assert scan.is_file()
+    assert existing.read_bytes() == original_output
+    assert result.groups[0].success is False
+    assert result.groups[0].details[0].status == "skipped_collision"
+
+
+def test_same_run_output_collision_skips_both_sources(tmp_path):
+    source = tmp_path / "scans"
+    source.mkdir()
+    first = source / "photo.tif"
+    second = source / "photo.tiff"
+    make_tiff(first, color=(1, 2, 3))
+    make_tiff(second, color=(4, 5, 6))
+
+    result = run_converter(
+        source,
+        dry_run=False,
+        create_heic=False,
+        create_jpg=False,
+        variant_policy="none",
+    )
+
+    assert first.is_file()
+    assert second.is_file()
+    assert not (source / "lossless_compressed" / "photo.ZIP.TIF").exists()
+    statuses = [d.status for d in result.groups[0].details]
+    assert statuses == ["skipped_collision", "skipped_collision"]
+
+
+def test_existing_original_archive_target_blocks_all_work(tmp_path):
+    source = tmp_path / "scans"
+    source.mkdir()
+    scan = source / "photo.tif"
+    make_tiff(scan, color=(1, 2, 3))
+    archived = source / "originals" / "photo.tif"
+    archived.parent.mkdir()
+    make_tiff(archived, color=(200, 100, 50))
+    original_archive = archived.read_bytes()
+
+    result = run_converter(
+        source,
+        dry_run=False,
+        create_heic=False,
+        create_jpg=False,
+        variant_policy="none",
+    )
+
+    assert scan.is_file()
+    assert archived.read_bytes() == original_archive
+    assert not (source / "lossless_compressed" / "photo.ZIP.TIF").exists()
+    assert result.groups[0].details[0].status == "skipped_collision"
+
+
+def test_output_directory_symlink_escape_is_rejected(tmp_path):
+    source = tmp_path / "scans"
+    outside = tmp_path / "outside"
+    source.mkdir()
+    outside.mkdir()
+    scan = source / "photo.tif"
+    make_tiff(scan)
+    (source / "lossless_compressed").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="outside source"):
+        run_converter(
+            source,
+            dry_run=False,
+            create_heic=False,
+            create_jpg=False,
+            variant_policy="none",
+        )
+
+    assert scan.is_file()
+    assert list(outside.iterdir()) == []
+
+
+def test_atomic_publish_never_replaces_racing_destination(tmp_path):
+    dest = tmp_path / "out.tif"
+
+    def write_fn(temp_path):
+        temp_path.write_bytes(b"new")
+        dest.write_bytes(b"race winner")
+
+    with pytest.raises(FileExistsError):
+        converter_engine._atomic_replace_temp(dest, write_fn)
+
+    assert dest.read_bytes() == b"race winner"
+    assert not list(tmp_path.glob(".out.tif.tmp.*"))
+
+
+def test_live_tiff_only_creates_only_required_directories(tmp_path):
+    source = tmp_path / "scans"
+    source.mkdir()
+    make_tiff(source / "photo.tif")
+
+    result = run_converter(
+        source,
+        dry_run=False,
+        create_heic=False,
+        create_jpg=False,
+        variant_policy="none",
+    )
+
+    assert result.groups[0].success is True
+    assert (source / "lossless_compressed" / "photo.ZIP.TIF").is_file()
+    assert (source / "originals" / "photo.tif").is_file()
+    assert not (source / "lossless_compressed" / "archive").exists()
+    assert not (source / "HEIC").exists()
+    assert not (source / "JPG").exists()

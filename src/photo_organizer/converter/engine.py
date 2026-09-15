@@ -8,6 +8,7 @@ import os
 import shutil
 import tempfile
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -148,11 +149,10 @@ def _sanitize_tiff_tags(tags) -> dict:
     return safe
 
 def _atomic_replace_temp(dest: Path, write_fn: Callable[[Path], None], cancel_event=None):
-    """
-    Write to a temp file in dest.parent then atomically move into place.
-    IMPORTANT: temp file uses dest.suffix so Pillow can infer format if needed.
-    """
+    """Write beside ``dest`` and publish atomically without overwriting."""
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        raise FileExistsError(f"Destination already exists: {dest}")
 
     fd, tmp = tempfile.mkstemp(
         prefix=f".{dest.name}.tmp.",
@@ -163,10 +163,13 @@ def _atomic_replace_temp(dest: Path, write_fn: Callable[[Path], None], cancel_ev
     tmp_path = Path(tmp)
 
     try:
-        if cancel_event is not None and getattr(cancel_event, "is_set", lambda: False)():
-            raise OperationCancelled("Process cancelled by user.")
+        _check_cancel(cancel_event)
         write_fn(tmp_path)
-        os.replace(tmp_path, dest)
+        _check_cancel(cancel_event)
+        # The temp file is on the same filesystem. A hard-link publication is
+        # atomic and fails with EEXIST if another process won the race; unlike
+        # os.replace(), it can never clobber an existing output.
+        os.link(tmp_path, dest)
     finally:
         try:
             tmp_path.unlink(missing_ok=True)
@@ -242,10 +245,11 @@ def process_epson_folder(folder_path: Path, options: dict,
         'heic': folder_path / "HEIC",
         'jpg': folder_path / "JPG"
     }
-
-    if not dry_run:
-        for d in dirs.values():
-            d.mkdir(parents=True, exist_ok=True)
+    source_root = folder_path.resolve()
+    for output_dir in dirs.values():
+        resolved = output_dir.resolve(strict=False)
+        if source_root != resolved and source_root not in resolved.parents:
+            raise ValueError(f"Output directory resolves outside source: {output_dir}")
 
     # 3. Scanning — exact root-level .tif/.tiff files only.
     tiff_files = sorted(
@@ -296,8 +300,13 @@ def process_epson_folder(folder_path: Path, options: dict,
 
             group_details = []
             variants_processed_successfully = []
-            
+
             all_process_candidates = fronts + backs
+            output_stem_counts = Counter(v.stem.casefold() for v in all_process_candidates)
+            duplicate_output_stems = {
+                candidate_stem for candidate_stem, count in output_stem_counts.items()
+                if count > 1
+            }
 
             # 5. Process Files
             for variant in all_process_candidates:
@@ -322,14 +331,32 @@ def process_epson_folder(folder_path: Path, options: dict,
                         status="planned" if dry_run else "pending",
                     )
                     t0 = time.time()
-                    
+
+                    if variant.stem.casefold() in duplicate_output_stems:
+                        detail.status = "skipped_collision"
+                        detail.error = "Multiple inputs map to the same output"
+                        group_details.append(detail)
+                        continue
+                    original_dest = dirs['originals'] / variant.name
+                    if original_dest.exists():
+                        detail.status = "skipped_collision"
+                        detail.error = "Original archive target already exists"
+                        group_details.append(detail)
+                        continue
+
                     try:
-                        if not dry_run:
+                        if dest_tiff.exists():
+                            detail.status = "skipped_collision"
+                            _log(f"  Skip existing output: {detail.output}")
+                        elif dry_run:
+                            tiff_success = True
+                            variants_processed_successfully.append(variant)
+                        else:
                             _save_tiff(variant, dest_tiff, compression, cancel_event)
                             detail.size_bytes = dest_tiff.stat().st_size
                             detail.status = "written"
-                        tiff_success = True
-                        variants_processed_successfully.append(variant)
+                            tiff_success = True
+                            variants_processed_successfully.append(variant)
                     except OperationCancelled:
                         detail.status = "cancelled"
                         raise
@@ -403,6 +430,7 @@ def process_epson_folder(folder_path: Path, options: dict,
                     _check_cancel(cancel_event)
                     try:
                         original_dest = dirs['originals'] / variant.name
+                        original_dest.parent.mkdir(parents=True, exist_ok=True)
                         shutil.move(str(variant), str(original_dest))
                         group_details.append(OpDetail(
                             variant.name, "MOVE_ORIGINAL",
